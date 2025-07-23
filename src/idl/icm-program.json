@@ -1,0 +1,867 @@
+{
+  "address": "ChzF1fiEZ8Uo2q62dg2f8MJSQW2oDxw4PJcbWiC1pxQe",
+  "metadata": {
+    "name": "icm_program",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "claim_rewards",
+      "discriminator": [
+        4,
+        144,
+        132,
+        71,
+        116,
+        23,
+        151,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "bucket",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "bucket.creator",
+                "account": "Bucket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contribution_record",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "contributor"
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contributor_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "contributor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "bucket_name",
+          "type": "string"
+        },
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "close_bucket",
+      "discriminator": [
+        221,
+        162,
+        41,
+        191,
+        18,
+        157,
+        170,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "bucket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "bucket_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "contribute_to_bucket",
+      "discriminator": [
+        155,
+        45,
+        223,
+        38,
+        100,
+        65,
+        26,
+        133
+      ],
+      "accounts": [
+        {
+          "name": "bucket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "bucket.creator",
+                "account": "Bucket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contribution_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "contributor"
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "contributor_token_account",
+          "writable": true
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "The vault token account - will be created if it doesn't exist",
+            "This works for both Token Program and Token 2022 Program"
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_mint",
+          "docs": [
+            "The token mint (can be either Token Program or Token 2022)"
+          ]
+        },
+        {
+          "name": "contributor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program (either Token Program or Token 2022 Program)"
+          ]
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "bucket_name",
+          "type": "string"
+        },
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "create_bucket",
+      "discriminator": [
+        26,
+        158,
+        9,
+        222,
+        245,
+        138,
+        207,
+        185
+      ],
+      "accounts": [
+        {
+          "name": "bucket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "token_mints",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "contribution_window_days",
+          "type": "u32"
+        },
+        {
+          "name": "trading_window_days",
+          "type": "u32"
+        },
+        {
+          "name": "creator_fee_percent",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "start_trading",
+      "discriminator": [
+        92,
+        94,
+        243,
+        100,
+        155,
+        170,
+        217,
+        68
+      ],
+      "accounts": [
+        {
+          "name": "bucket",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "bucket_name",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "swap_tokens",
+      "discriminator": [
+        201,
+        226,
+        234,
+        16,
+        70,
+        155,
+        131,
+        206
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "bucket",
+          "writable": true
+        },
+        {
+          "name": "input_mint"
+        },
+        {
+          "name": "input_mint_program"
+        },
+        {
+          "name": "output_mint"
+        },
+        {
+          "name": "output_mint_program"
+        },
+        {
+          "name": "vault_input_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "input_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault_output_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "output_mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "jupiter_program"
+        },
+        {
+          "name": "token_2022_program",
+          "docs": [
+            "Token program for Token-2022 compatibility"
+          ]
+        },
+        {
+          "name": "platform_fee_account",
+          "docs": [
+            "Platform fee account (optional - can be same as vault_output_token_account)"
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "route_plan",
+          "type": "bytes"
+        },
+        {
+          "name": "in_amount",
+          "type": "u64"
+        },
+        {
+          "name": "quoted_out_amount",
+          "type": "u64"
+        },
+        {
+          "name": "slippage_bps",
+          "type": "u16"
+        },
+        {
+          "name": "platform_fee_bps",
+          "type": "u16"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Bucket",
+      "discriminator": [
+        27,
+        203,
+        100,
+        76,
+        218,
+        12,
+        58,
+        168
+      ]
+    },
+    {
+      "name": "ContributionRecord",
+      "discriminator": [
+        15,
+        18,
+        241,
+        137,
+        218,
+        174,
+        115,
+        119
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "NameTooLong",
+      "msg": "Bucket name is too long (max 64 characters)"
+    },
+    {
+      "code": 6001,
+      "name": "InsufficientTokens",
+      "msg": "Must have at least 2 tokens"
+    },
+    {
+      "code": 6002,
+      "name": "TooManyTokens",
+      "msg": "Too many tokens (max 10)"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidContributionWindow",
+      "msg": "Invalid contribution window (1-30 days)"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidTradingWindow",
+      "msg": "Invalid trading window (1-180 days)"
+    },
+    {
+      "code": 6005,
+      "name": "FeeTooHigh",
+      "msg": "Creator fee too high (max 20%)"
+    },
+    {
+      "code": 6006,
+      "name": "DuplicateTokens",
+      "msg": "Duplicate tokens not allowed"
+    },
+    {
+      "code": 6007,
+      "name": "BucketNotRaising",
+      "msg": "Bucket is not in raising state"
+    },
+    {
+      "code": 6008,
+      "name": "ContributionDeadlinePassed",
+      "msg": "Contribution deadline has passed"
+    },
+    {
+      "code": 6009,
+      "name": "TokenNotAllowed",
+      "msg": "Token not allowed in this bucket"
+    },
+    {
+      "code": 6010,
+      "name": "InvalidAmount",
+      "msg": "Invalid amount"
+    },
+    {
+      "code": 6011,
+      "name": "UnauthorizedCreator",
+      "msg": "Unauthorized creator"
+    },
+    {
+      "code": 6012,
+      "name": "ContributionStillActive",
+      "msg": "Contribution window still active"
+    },
+    {
+      "code": 6013,
+      "name": "NoContributions",
+      "msg": "No contributions made"
+    },
+    {
+      "code": 6014,
+      "name": "BucketNotTrading",
+      "msg": "Bucket is not in trading state"
+    },
+    {
+      "code": 6015,
+      "name": "TradingStillActive",
+      "msg": "Trading window still active"
+    },
+    {
+      "code": 6016,
+      "name": "BucketNotClosed",
+      "msg": "Bucket is not closed"
+    },
+    {
+      "code": 6017,
+      "name": "UnauthorizedContributor",
+      "msg": "Unauthorized contributor"
+    },
+    {
+      "code": 6018,
+      "name": "NoRewardsAvailable",
+      "msg": "No rewards available"
+    },
+    {
+      "code": 6019,
+      "name": "TradingNotStarted",
+      "msg": "Trading has not started yet"
+    },
+    {
+      "code": 6020,
+      "name": "InvalidTokenMint",
+      "msg": "Invalid token mint for this bucket"
+    },
+    {
+      "code": 6021,
+      "name": "TradingDeadlinePassed",
+      "msg": "Trading deadline has passed"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidBucketStatus",
+      "msg": "Invalid bucket status"
+    },
+    {
+      "code": 6023,
+      "name": "InsufficientVaultBalance",
+      "msg": "Insufficient vault balance"
+    },
+    {
+      "code": 6024,
+      "name": "InvalidSwapAmount",
+      "msg": "Invalid swap amount"
+    }
+  ],
+  "types": [
+    {
+      "name": "Bucket",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "token_mints",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "contribution_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "trading_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "creator_fee_percent",
+            "type": "u16"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "BucketStatus"
+              }
+            }
+          },
+          {
+            "name": "total_contributions",
+            "type": "u64"
+          },
+          {
+            "name": "trading_started_at",
+            "type": "i64"
+          },
+          {
+            "name": "closed_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BucketStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Raising"
+          },
+          {
+            "name": "Trading"
+          },
+          {
+            "name": "Closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ContributionRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "contributor",
+            "type": "pubkey"
+          },
+          {
+            "name": "bucket",
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

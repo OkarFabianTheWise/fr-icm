@@ -1,0 +1,414 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{RwLock, mpsc, Semaphore};
+use tokio::time::{timeout, Instant};
+use reqwest::Client;
+use serde_json::{json, Value};
+use tracing::{info, warn, error, debug};
+use chrono::Utc;
+
+use crate::agent::types::{TradingPlan, AgentError, ExecutionSettings};
+use crate::onchain_instance::instance::{IcmProgramInstance, SwapTokensRequest, UnsignedTransactionResponse};
+
+const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6";
+
+/// Executes trading plans by building and submitting transactions
+pub struct Executor {
+    icm_client: Arc<IcmProgramInstance>,
+    http_client: Client,
+    execution_semaphore: Arc<Semaphore>,
+    plan_receiver: Option<mpsc::UnboundedReceiver<TradingPlan>>,
+    execution_results: mpsc::UnboundedSender<ExecutionResult>,
+    is_active: Arc<RwLock<bool>>,
+    metrics: Arc<RwLock<ExecutionMetrics>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionResult {
+    pub plan_id: uuid::Uuid,
+    pub success: bool,
+    pub transaction_signature: Option<String>,
+    pub execution_time_ms: u64,
+    pub actual_slippage_bps: Option<u16>,
+    pub error_message: Option<String>,
+    pub gas_used: Option<u64>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ExecutionMetrics {
+    pub total_executions: u64,
+    pub successful_executions: u64,
+    pub failed_executions: u64,
+    pub avg_execution_time_ms: u64,
+    pub total_gas_used: u64,
+    pub last_execution: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Executor {
+    pub fn new(
+        icm_client: Arc<IcmProgramInstance>,
+        max_concurrent_executions: usize,
+    ) -> (Self, mpsc::UnboundedReceiver<TradingPlan>, mpsc::UnboundedReceiver<ExecutionResult>) {
+        let (plan_sender, plan_receiver) = mpsc::unbounded_channel();
+        let (result_sender, result_receiver) = mpsc::unbounded_channel();
+
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        let executor = Self {
+            icm_client,
+            http_client,
+            execution_semaphore: Arc::new(Semaphore::new(max_concurrent_executions)),
+            plan_receiver: Some(plan_receiver),
+            execution_results: result_sender,
+            is_active: Arc::new(RwLock::new(false)),
+            metrics: Arc::new(RwLock::new(ExecutionMetrics::default())),
+        };
+
+        // Return the plan_sender wrapped in a way that can be used by planner
+        let (plan_tx, plan_rx) = mpsc::unbounded_channel();
+        (executor, plan_rx, result_receiver)
+    }
+
+    /// Start the execution loop
+    pub async fn start(&mut self) -> Result<(), AgentError> {
+        {
+            let mut is_active = self.is_active.write().await;
+            if *is_active {
+                return Ok(());
+            }
+            *is_active = true;
+        }
+
+        let mut plan_receiver = self.plan_receiver.take()
+            .ok_or_else(|| AgentError::Configuration("Executor already started".to_string()))?;
+
+        info!("Starting executor");
+
+        while *self.is_active.read().await {
+            tokio::select! {
+                Some(plan) = plan_receiver.recv() => {
+                    // Clone necessary data for async execution
+                    let executor_clone = ExecutorHandle {
+                        icm_client: Arc::clone(&self.icm_client),
+                        http_client: self.http_client.clone(),
+                        execution_semaphore: Arc::clone(&self.execution_semaphore),
+                        result_sender: self.execution_results.clone(),
+                        metrics: Arc::clone(&self.metrics),
+                    };
+
+                    // Execute plan concurrently
+                    tokio::spawn(async move {
+                        executor_clone.execute_plan(plan).await;
+                    });
+                }
+            }
+        }
+
+        info!("Executor stopped");
+        Ok(())
+    }
+
+    /// Stop the executor
+    pub async fn stop(&self) {
+        let mut is_active = self.is_active.write().await;
+        *is_active = false;
+        info!("Executor stop signal sent");
+    }
+
+    /// Get execution metrics
+    pub async fn get_metrics(&self) -> ExecutionMetrics {
+        (*self.metrics.read().await).clone()
+    }
+
+    /// Get executor statistics
+    pub async fn get_stats(&self) -> ExecutorStats {
+        let metrics = self.metrics.read().await;
+        let available_permits = self.execution_semaphore.available_permits();
+        
+        ExecutorStats {
+            is_active: *self.is_active.read().await,
+            available_permits,
+            total_executions: metrics.total_executions,
+            success_rate: if metrics.total_executions > 0 {
+                metrics.successful_executions as f64 / metrics.total_executions as f64
+            } else {
+                0.0
+            },
+            avg_execution_time_ms: metrics.avg_execution_time_ms,
+        }
+    }
+}
+
+/// Helper struct for executing plans concurrently
+struct ExecutorHandle {
+    icm_client: Arc<IcmProgramInstance>,
+    http_client: Client,
+    execution_semaphore: Arc<Semaphore>,
+    result_sender: mpsc::UnboundedSender<ExecutionResult>,
+    metrics: Arc<RwLock<ExecutionMetrics>>,
+}
+
+impl ExecutorHandle {
+    /// Execute a single trading plan
+    async fn execute_plan(&self, plan: TradingPlan) {
+        let start_time = Instant::now();
+        let plan_id = plan.id;
+
+        // Acquire execution permit
+        let permit = match self.execution_semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(e) => {
+                error!("Failed to acquire execution permit: {}", e);
+                self.send_failure_result(plan_id, "Failed to acquire execution permit".to_string(), start_time).await;
+                return;
+            }
+        };
+
+        info!("Executing plan {} for strategy {:?}", plan_id, plan.strategy_type);
+
+        // Check if plan is still valid (not expired)
+        if Utc::now() > plan.expires_at {
+            warn!("Plan {} expired, skipping execution", plan_id);
+            self.send_failure_result(plan_id, "Plan expired".to_string(), start_time).await;
+            drop(permit);
+            return;
+        }
+
+        let result = match self.execute_swap(&plan).await {
+            Ok(tx_response) => ExecutionResult {
+                plan_id,
+                success: true,
+                transaction_signature: Some(tx_response.transaction),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                actual_slippage_bps: None, // Would be calculated from actual execution
+                error_message: None,
+                gas_used: Some(5000), // Placeholder - would get from transaction receipt
+                timestamp: Utc::now(),
+            },
+            Err(e) => ExecutionResult {
+                plan_id,
+                success: false,
+                transaction_signature: None,
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                actual_slippage_bps: None,
+                error_message: Some(e.to_string()),
+                gas_used: None,
+                timestamp: Utc::now(),
+            },
+        };
+
+        // Update metrics
+        self.update_metrics(&result).await;
+
+        // Send result
+        if let Err(e) = self.result_sender.send(result) {
+            error!("Failed to send execution result: {}", e);
+        }
+
+        drop(permit);
+    }
+
+    /// Execute the swap transaction
+    async fn execute_swap(&self, plan: &TradingPlan) -> Result<UnsignedTransactionResponse, AgentError> {
+        // First, get fresh route instructions from Jupiter
+        let swap_instructions = self.get_jupiter_swap_instructions(plan).await?;
+
+        // Build swap request for our ICM program
+        let swap_request = SwapTokensRequest {
+            creator_pubkey: plan.bucket_pubkey.to_string(), // Creator should be derived properly
+            bucket_pubkey: plan.bucket_pubkey.to_string(),
+            input_mint: plan.input_mint.to_string(),
+            output_mint: plan.output_mint.to_string(),
+            route_plan: plan.route_plan.clone(),
+            in_amount: plan.input_amount,
+            quoted_out_amount: plan.min_output_amount,
+            slippage_bps: plan.max_slippage_bps,
+            platform_fee_bps: 0, // Could be configured
+        };
+
+        // Execute through ICM program
+        let tx_response = self.icm_client.swap_tokens_transaction(swap_request).await
+            .map_err(|e| AgentError::TransactionFailed(format!("ICM swap failed: {}", e)))?;
+
+        info!("Generated unsigned transaction for plan {}", plan.id);
+        
+        // In a real implementation, you would:
+        // 1. Send transaction to network
+        // 2. Monitor for confirmation
+        // 3. Handle retries if needed
+        // 4. Update with actual transaction signature
+
+        Ok(tx_response)
+    }
+
+    /// Get swap instructions from Jupiter API
+    async fn get_jupiter_swap_instructions(&self, plan: &TradingPlan) -> Result<Value, AgentError> {
+        let swap_request = json!({
+            "quoteResponse": {
+                "inputMint": plan.input_mint.to_string(),
+                "outputMint": plan.output_mint.to_string(),
+                "inAmount": plan.input_amount.to_string(),
+                "outAmount": plan.min_output_amount.to_string(),
+                "routePlan": self.decode_route_plan(&plan.route_plan)?,
+            },
+            "userPublicKey": plan.bucket_pubkey.to_string(),
+            "wrapAndUnwrapSol": true,
+            "feeAccount": plan.bucket_pubkey.to_string(),
+            "computeUnitPriceMicroLamports": plan.priority_fee,
+            "prioritizationFeeLamports": plan.priority_fee,
+        });
+
+        let response = timeout(
+            Duration::from_millis(10000), // 10 second timeout
+            self.http_client
+                .post(&format!("{}/swap-instructions", JUPITER_SWAP_API))
+                .json(&swap_request)
+                .send()
+        ).await
+        .map_err(|_| AgentError::TransactionFailed("Jupiter API timeout".to_string()))?
+        .map_err(|e| AgentError::Network(e))?;
+
+        if !response.status().is_success() {
+            return Err(AgentError::JupiterApi(format!(
+                "Swap instructions failed: HTTP {}",
+                response.status()
+            )));
+        }
+
+        let instructions: Value = response.json().await?;
+        Ok(instructions)
+    }
+
+    /// Decode route plan from binary format
+    fn decode_route_plan(&self, encoded: &[u8]) -> Result<Value, AgentError> {
+        // Decode the route plan that was encoded by the strategy
+        let route_plan: Vec<crate::agent::types::RoutePlan> = bincode::deserialize(encoded)
+            .map_err(|e| AgentError::Configuration(format!("Failed to decode route plan: {}", e)))?;
+
+        // Convert to Jupiter API format
+        let jupiter_format = route_plan.iter().map(|rp| {
+            json!({
+                "swapInfo": {
+                    "ammKey": rp.swap_info.amm_key,
+                    "label": rp.swap_info.label,
+                    "inputMint": rp.swap_info.input_mint,
+                    "outputMint": rp.swap_info.output_mint,
+                    "inAmount": rp.swap_info.in_amount,
+                    "outAmount": rp.swap_info.out_amount,
+                    "feeAmount": rp.swap_info.fee_amount,
+                    "feeMint": rp.swap_info.fee_mint,
+                },
+                "percent": rp.percent
+            })
+        }).collect::<Vec<_>>();
+
+        Ok(json!(jupiter_format))
+    }
+
+    /// Update execution metrics
+    async fn update_metrics(&self, result: &ExecutionResult) {
+        let mut metrics = self.metrics.write().await;
+        
+        metrics.total_executions += 1;
+        if result.success {
+            metrics.successful_executions += 1;
+        } else {
+            metrics.failed_executions += 1;
+        }
+
+        // Update average execution time
+        if metrics.total_executions == 1 {
+            metrics.avg_execution_time_ms = result.execution_time_ms;
+        } else {
+            metrics.avg_execution_time_ms = (
+                (metrics.avg_execution_time_ms * (metrics.total_executions - 1)) + result.execution_time_ms
+            ) / metrics.total_executions;
+        }
+
+        if let Some(gas_used) = result.gas_used {
+            metrics.total_gas_used += gas_used;
+        }
+
+        metrics.last_execution = Some(result.timestamp);
+
+        debug!("Updated metrics: total={}, success={}, avg_time={}ms",
+               metrics.total_executions,
+               metrics.successful_executions,
+               metrics.avg_execution_time_ms);
+    }
+
+    /// Send failure result
+    async fn send_failure_result(&self, plan_id: uuid::Uuid, error: String, start_time: Instant) {
+        let result = ExecutionResult {
+            plan_id,
+            success: false,
+            transaction_signature: None,
+            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            actual_slippage_bps: None,
+            error_message: Some(error),
+            gas_used: None,
+            timestamp: Utc::now(),
+        };
+
+        self.update_metrics(&result).await;
+
+        if let Err(e) = self.result_sender.send(result) {
+            error!("Failed to send failure result: {}", e);
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ExecutorStats {
+    pub is_active: bool,
+    pub available_permits: usize,
+    pub total_executions: u64,
+    pub success_rate: f64,
+    pub avg_execution_time_ms: u64,
+}
+
+/// Retry configuration for failed executions
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub max_attempts: u8,
+    pub initial_delay_ms: u64,
+    pub backoff_multiplier: f64,
+    pub max_delay_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_delay_ms: 1000,
+            backoff_multiplier: 2.0,
+            max_delay_ms: 10000,
+        }
+    }
+}
+
+/// Transaction status for monitoring
+#[derive(Debug, Clone)]
+pub enum TransactionStatus {
+    Pending,
+    Confirmed,
+    Failed,
+    Expired,
+}
+
+/// Enhanced execution result with more details
+#[derive(Debug, Clone)]
+pub struct DetailedExecutionResult {
+    pub basic: ExecutionResult,
+    pub transaction_status: Option<TransactionStatus>,
+    pub block_slot: Option<u64>,
+    pub confirmation_count: Option<u8>,
+    pub retry_count: u8,
+    pub final_output_amount: Option<u64>,
+    pub fees_paid: Option<u64>,
+}
