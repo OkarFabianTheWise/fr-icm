@@ -84,6 +84,48 @@
           }
         },
         {
+          "name": "pool_contribution",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "contributor"
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
           "name": "contributor_token_account",
           "writable": true
         },
@@ -144,6 +186,71 @@
               {
                 "kind": "arg",
                 "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trading_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
               },
               {
                 "kind": "account",
@@ -244,15 +351,53 @@
           }
         },
         {
+          "name": "pool_contribution",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  99,
+                  111,
+                  110,
+                  116,
+                  114,
+                  105,
+                  98,
+                  117,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "contributor"
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              }
+            ]
+          }
+        },
+        {
           "name": "contributor_token_account",
           "writable": true
         },
         {
           "name": "vault_token_account",
-          "docs": [
-            "The vault token account - will be created if it doesn't exist",
-            "This works for both Token Program and Token 2022 Program"
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -309,10 +454,7 @@
           }
         },
         {
-          "name": "token_mint",
-          "docs": [
-            "The token mint (can be either Token Program or Token 2022)"
-          ]
+          "name": "token_mint"
         },
         {
           "name": "contributor",
@@ -320,10 +462,7 @@
           "signer": true
         },
         {
-          "name": "token_program",
-          "docs": [
-            "Token program (either Token Program or Token 2022 Program)"
-          ]
+          "name": "token_program"
         },
         {
           "name": "associated_token_program",
@@ -381,6 +520,71 @@
               {
                 "kind": "arg",
                 "path": "name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "trading_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
               },
               {
                 "kind": "account",
@@ -465,6 +669,39 @@
           }
         },
         {
+          "name": "trading_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "bucket_name"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
           "name": "creator",
           "writable": true,
           "signer": true
@@ -491,6 +728,39 @@
       ],
       "accounts": [
         {
+          "name": "trade_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  101,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
           "name": "creator",
           "writable": true,
           "signer": true
@@ -501,6 +771,10 @@
         },
         {
           "name": "input_mint"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
         },
         {
           "name": "input_mint_program"
@@ -629,6 +903,58 @@
         174,
         115,
         119
+      ]
+    },
+    {
+      "name": "CreatorProfile",
+      "discriminator": [
+        251,
+        250,
+        184,
+        111,
+        214,
+        178,
+        32,
+        221
+      ]
+    },
+    {
+      "name": "PoolContribution",
+      "discriminator": [
+        173,
+        71,
+        103,
+        30,
+        93,
+        212,
+        225,
+        124
+      ]
+    },
+    {
+      "name": "TradeRecord",
+      "discriminator": [
+        150,
+        248,
+        182,
+        169,
+        229,
+        100,
+        24,
+        37
+      ]
+    },
+    {
+      "name": "TradingPool",
+      "discriminator": [
+        193,
+        255,
+        67,
+        175,
+        127,
+        43,
+        247,
+        53
       ]
     }
   ],
@@ -859,6 +1185,256 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreatorProfile",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "pools_created",
+            "type": "u32"
+          },
+          {
+            "name": "successful_pools",
+            "type": "u32"
+          },
+          {
+            "name": "total_volume_managed",
+            "type": "u64"
+          },
+          {
+            "name": "reputation_score",
+            "type": "u32"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolContribution",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "contributor",
+            "type": "pubkey"
+          },
+          {
+            "name": "contribution_amount",
+            "type": "u64"
+          },
+          {
+            "name": "contribution_timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "pool_share_percentage",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolPhase",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Raising"
+          },
+          {
+            "name": "Trading"
+          },
+          {
+            "name": "Closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "trade_id",
+            "type": "u64"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "trade_type",
+            "type": {
+              "defined": {
+                "name": "TradeType"
+              }
+            }
+          },
+          {
+            "name": "from_token",
+            "type": "pubkey"
+          },
+          {
+            "name": "to_token",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount_in",
+            "type": "u64"
+          },
+          {
+            "name": "amount_out",
+            "type": "u64"
+          },
+          {
+            "name": "slippage",
+            "type": "u16"
+          },
+          {
+            "name": "success",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradeType",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "BuyToken"
+          },
+          {
+            "name": "SellToken"
+          },
+          {
+            "name": "Rebalance"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TradingPool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool_bump",
+            "type": "u8"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "strategy_description",
+            "type": "string"
+          },
+          {
+            "name": "token_bucket",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "target_amount",
+            "type": "u64"
+          },
+          {
+            "name": "min_contribution",
+            "type": "u64"
+          },
+          {
+            "name": "max_contribution",
+            "type": "u64"
+          },
+          {
+            "name": "trading_duration",
+            "type": "u64"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "fundraising_deadline",
+            "type": "i64"
+          },
+          {
+            "name": "trading_start_time",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "trading_end_time",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "phase",
+            "type": {
+              "defined": {
+                "name": "PoolPhase"
+              }
+            }
+          },
+          {
+            "name": "raised_amount",
+            "type": "u64"
+          },
+          {
+            "name": "contributor_count",
+            "type": "u32"
+          },
+          {
+            "name": "management_fee",
+            "type": "u16"
+          },
+          {
+            "name": "performance_fee",
+            "type": "u16"
+          },
+          {
+            "name": "trade_count",
+            "type": "u32"
+          },
+          {
+            "name": "last_trade_time",
+            "type": {
+              "option": "i64"
+            }
           }
         ]
       }

@@ -22,31 +22,63 @@ impl AuthMiddleware {
         mut req: Request,
         next: Next,
     ) -> Result<Response, StatusCode> {
-        // Extract Authorization header
-        let auth_header = req
+        tracing::info!("[AuthMiddleware] Incoming request: {} {}", req.method(), req.uri());
+        // Try to extract token from Authorization header (Bearer) or access_token cookie
+        let token_opt = req
             .headers()
             .get(header::AUTHORIZATION)
             .and_then(|header| header.to_str().ok())
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+            .and_then(|auth_header| {
+                if auth_header.starts_with("Bearer ") {
+                    Some(auth_header[7..].to_string())
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                // Fallback: try to get from cookie
+                req.headers()
+                    .get(header::COOKIE)
+                    .and_then(|cookie_header| cookie_header.to_str().ok())
+                    .and_then(|cookie_str| {
+                        // Parse cookies
+                        for cookie in cookie_str.split(';') {
+                            let cookie = cookie.trim();
+                            if let Some(rest) = cookie.strip_prefix("access_token=") {
+                                return Some(rest.to_string());
+                            }
+                        }
+                        None
+                    })
+            });
 
-        // Check for Bearer token format
-        if !auth_header.starts_with("Bearer ") {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-
-        let token = &auth_header[7..]; // Remove "Bearer " prefix
+        let token = match token_opt {
+            Some(token) => token,
+            None => {
+                tracing::warn!("[AuthMiddleware] Missing Authorization header and access_token cookie");
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        };
+        tracing::info!("[AuthMiddleware] Extracted token: {}", token);
 
         // Validate the token
-        let claims = jwt_service
-            .validate_token(token)
-            .map_err(|_| StatusCode::UNAUTHORIZED)?
-            .claims;
+        let claims = match jwt_service.validate_token(&token) {
+            Ok(data) => {
+                tracing::info!("[AuthMiddleware] JWT validated successfully for sub={}, email={}", data.claims.sub, data.claims.email);
+                data.claims
+            },
+            Err(e) => {
+                tracing::warn!("[AuthMiddleware] JWT validation failed: {:?}", e);
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        };
 
         // Create AuthUser from claims
         let auth_user = AuthUser {
             id: claims.sub,
             email: claims.email,
         };
+        tracing::info!("[AuthMiddleware] AuthUser injected: id={}, email={}", auth_user.id, auth_user.email);
 
         // Insert the user into request extensions for downstream handlers
         req.extensions_mut().insert(auth_user);

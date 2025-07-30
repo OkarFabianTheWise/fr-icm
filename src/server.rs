@@ -3,6 +3,7 @@
 //! HTTP server setup and route configuration for the ICM server.
 
 use axum::{Router, routing::{get, post}};
+use tower_http::cors::{CorsLayer, Any};
 use tokio::net::TcpListener;
 use std::sync::Arc;
 use anchor_client::Cluster;
@@ -20,6 +21,8 @@ use crate::agent::TradingAgent;
 pub struct AppState {
     pub icm_client: Arc<IcmProgramInstance>,
     pub trading_agent: Arc<RwLock<Option<TradingAgent>>>,
+    pub jwt_service: Arc<crate::auth::jwt::JwtService>,
+    pub db: Arc<crate::database::connection::DatabaseConnection>,
 }
 
 /// Starts the ICM (Intelligent Content Management) HTTP server.
@@ -38,32 +41,68 @@ pub async fn start() {
         }
     };
 
+    // Create JWT service first
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev_secret".to_string());
+    let jwt_service = Arc::new(crate::auth::jwt::JwtService::new(&jwt_secret));
+
+    // Initialize database connection
+    let db = Arc::new(crate::database::connection::DatabaseConnection::new_local().await.expect("Failed to connect to DB"));
+
     // Create application state
     let app_state = AppState {
         icm_client: icm_instance,
         trading_agent: Arc::new(RwLock::new(None)),
+        jwt_service: jwt_service.clone(),
+        db: db.clone(),
     };
 
-    // Create the main application router with all route configurations
+    // Import the AuthMiddleware
+    use crate::auth::middleware::AuthMiddleware;
+    use axum::middleware;
+
+    // Bucket endpoints require authentication
+    let bucket_routes = Router::new()
+        .route("/api/v1/bucket/create", post(crate::routes::icm::create_bucket))
+        .route("/api/v1/bucket/contribute", post(crate::routes::icm::contribute_to_bucket))
+        .route("/api/v1/bucket/start-trading", post(crate::routes::icm::start_trading))
+        .route("/api/v1/bucket/swap", post(crate::routes::icm::swap_tokens))
+        .route("/api/v1/bucket/claim-rewards", post(crate::routes::icm::claim_rewards))
+        .route("/api/v1/bucket/close", post(crate::routes::icm::close_bucket))
+        .route("/api/v1/bucket/all", get(crate::routes::icm::get_all_pools))
+        .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token));
+
+    use tower::ServiceBuilder;
+    // Main app router
     let app = Router::new()
         .route("/ping", get(ping)) // Health check endpoint
-        
-        // ICM Program Routes
-        .route("/api/v1/bucket", post(icm::create_bucket))
-        .route("/api/v1/bucket", get(icm::get_bucket))
-        .route("/api/v1/bucket/contribute", post(icm::contribute_to_bucket))
-        .route("/api/v1/bucket/start-trading", post(icm::start_trading))
-        .route("/api/v1/bucket/swap", post(icm::swap_tokens))
-        .route("/api/v1/bucket/claim-rewards", post(icm::claim_rewards))
-        .route("/api/v1/bucket/close", post(icm::close_bucket))
-        
+        .merge(bucket_routes)
         // Merge agent routes
         .merge(agent::create_routes())
-        
+        // Merge auth routes
+        .merge(crate::routes::auth::create_auth_routes())
+        .layer(
+            ServiceBuilder::new()
+                .layer(
+                    CorsLayer::new()
+                        .allow_origin("http://localhost:3001".parse::<axum::http::HeaderValue>().unwrap()) // Allow frontend origin
+                        .allow_methods([
+                            axum::http::Method::GET,
+                            axum::http::Method::POST,
+                            axum::http::Method::OPTIONS,
+                        ])
+                        .allow_headers([
+                            axum::http::header::ORIGIN,
+                            axum::http::header::CONTENT_TYPE,
+                            axum::http::header::ACCEPT,
+                            axum::http::header::AUTHORIZATION,
+                        ])
+                        .allow_credentials(true) // Allow cookies for auth
+                )
+        )
         .with_state(app_state);
 
     // Define the server address - currently localhost only for development
-    let addr = "127.0.0.1:3000";
+    let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().expect("Invalid address format");
 
     // Create a TCP listener bound to the specified address
     let listener = TcpListener::bind(addr).await.expect(
@@ -80,5 +119,5 @@ pub async fn start() {
     tracing::info!("🌐 Cluster: Devnet");
 
     // Start serving the application
-    axum::serve(listener, app).await.expect("Server failed to start or encountered a fatal error");
+    axum::serve(listener, app).await.unwrap();
 }

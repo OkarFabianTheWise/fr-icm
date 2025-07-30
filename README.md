@@ -1,5 +1,7 @@
 # ICM Server - AI-Powered Trading System
 
+### sudo -u postgres psql
+
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Rust Version](https://img.shields.io/badge/rust-1.75+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)

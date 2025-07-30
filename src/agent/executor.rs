@@ -215,6 +215,11 @@ impl ExecutorHandle {
 
     /// Execute the swap transaction
     async fn execute_swap(&self, plan: &TradingPlan) -> Result<UnsignedTransactionResponse, AgentError> {
+        // Load keypair (replace with your actual keypair management logic)
+        use solana_sdk::signature::read_keypair_file;
+        let keypair = read_keypair_file("/path/to/your/keypair.json")
+            .map_err(|e| AgentError::Configuration(format!("Failed to load keypair: {}", e)))?;
+
         // First, get fresh route instructions from Jupiter
         let swap_instructions = self.get_jupiter_swap_instructions(plan).await?;
 
@@ -232,7 +237,7 @@ impl ExecutorHandle {
         };
 
         // Execute through ICM program
-        let tx_response = self.icm_client.swap_tokens_transaction(swap_request).await
+        let tx_response = self.icm_client.swap_tokens_transaction(swap_request, keypair).await
             .map_err(|e| AgentError::TransactionFailed(format!("ICM swap failed: {}", e)))?;
 
         info!("Generated unsigned transaction for plan {}", plan.id);

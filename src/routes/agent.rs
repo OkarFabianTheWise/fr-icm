@@ -126,7 +126,7 @@ pub async fn start_agent(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid configuration: {}", e)))?;
 
     // Create new trading agent
-    let mut new_agent = TradingAgent::new(config, Arc::clone(&state.icm_client)).await
+    let new_agent = TradingAgent::new(config, Arc::clone(&state.icm_client)).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create agent: {}", e)))?;
 
     // Start the agent (this would need to be run in a background task)

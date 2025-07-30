@@ -75,6 +75,7 @@ use tracing_subscriber::{ layer::SubscriberExt, util::SubscriberInitExt };
 #[tokio::main]
 async fn main() {
     // Initialize the tracing subscriber for structured logging
+    // RUST_LOG =info
     // This sets up console output with timestamps and proper formatting
     tracing_subscriber
         ::registry()

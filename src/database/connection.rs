@@ -93,6 +93,7 @@ impl DatabaseConnection {
             .wait_timeout(config.timeouts.wait)
             .create_timeout(config.timeouts.create)
             .recycle_timeout(config.timeouts.recycle)
+            .runtime(deadpool_postgres::Runtime::Tokio1)
             .build()
             .context("Failed to create database pool")?;
 
@@ -126,7 +127,7 @@ impl DatabaseConnection {
 
     /// Create connection from your specific PostgreSQL URL
     pub async fn new_from_local_postgres() -> Result<Self> {
-        let url = "postgresql://orkarfabianthewise:2000@localhost/postgres";
+        let url = "postgresql://postgres:2000@localhost:5432/postgres";
         Self::from_url(url).await
     }
 
@@ -150,6 +151,32 @@ impl DatabaseConnection {
         
         tracing::info!("✅ Database migrations completed successfully");
         Ok(())
+    }
+
+    /// Fetch the user's private key from the database by user_id
+    pub async fn get_user_private_key(&self, user_id: uuid::Uuid) -> Result<Option<String>> {
+        let client = self.pool.get().await.context("Failed to get DB connection")?;
+        let row = client
+            .query_opt(
+                "SELECT private_key FROM users WHERE id = $1",
+                &[&user_id],
+            )
+            .await
+            .context("Failed to query user private key")?;
+        Ok(row.and_then(|r| r.try_get("private_key").ok()))
+    }
+
+    /// Fetch the user's private key from the database by email
+    pub async fn get_user_private_key_by_email(&self, email: &str) -> Result<Option<String>> {
+        let client = self.pool.get().await.context("Failed to get DB connection")?;
+        let row = client
+            .query_opt(
+                "SELECT private_key FROM users WHERE email = $1",
+                &[&email],
+            )
+            .await
+            .context("Failed to query user private key by email")?;
+        Ok(row.and_then(|r| r.try_get("private_key").ok()))
     }
 
     /// Check database health

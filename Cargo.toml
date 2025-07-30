@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8.4"
+axum = { version = "0.8.4", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5.2"
 tower-async = "0.2.0"
@@ -33,8 +33,7 @@ spl-associated-token-account = "4.0"
 base64 = "0.22"
 bincode = "1.3"
 anchor-client = { version = "0.31.1 ", features = ["async"] }
-anchor-lang = "0.31.1"
-# AI and trading dependencies
+anchor-lang = { version = "0.31.1", features = ["idl-build"] }
 openai-api-rs = "5.0"
 futures = "0.3"
 tokio-tungstenite = "0.21"
@@ -44,3 +43,9 @@ crossbeam = "0.8"
 ring = "0.17"
 rand = "0.8"
 once_cell = "1.19"
+tower-http = { version = "0.6.6", features = ["cors"] }
+argon2 = { version = "0.5.3", features = ["std"] }
+rand_core = { version = "0.9.3", features = ["os_rng", "serde", "std"] }
+time = "0.3.41"
+axum-extra = { version = "0.10.1", features = ["cookie"] }
+
