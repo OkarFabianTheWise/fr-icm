@@ -1,10 +1,49 @@
 //! Auth routes for registration, login, and user info
 
 use axum::{Json, Router, routing::{post, get}, extract::State};
-use axum_extra::extract::cookie::CookieJar;
-use axum::response::Json as AxumJson;
-use serde_json::Value;
-use axum::response::IntoResponse;
+use axum_extra::extract::cookie::{CookieJar, Cookie, SameSite};
+use axum::response::{Json as AxumJson, IntoResponse, Response};
+use axum::http::{header, StatusCode};
+use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use argon2::{Argon2, password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}};
+use argon2::password_hash::rand_core::OsRng;
+use solana_sdk::signature::Keypair;
+use solana_sdk::signature::Signer;
+use tokio_postgres::types::ToSql;
+use deadpool_postgres::Pool;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use crate::auth::{jwt::JwtService, models::AuthUser};
+use uuid::Uuid;
+use crate::server::AppState;
+use crate::database::connection::DatabaseConfig;
+use chrono::Duration as ChronoDuration;
+
+#[derive(Deserialize)]
+pub struct RegisterRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Serialize)]
+pub struct Tokens {
+    pub accessToken: String,
+    pub expiresAt: i64,
+}
+
+#[derive(Serialize)]
+pub struct RegisterResponse {
+    pub user: AuthUser,
+    pub tokens: Tokens,
+    pub wallet_address: String,
+}
 
 // /api/auth/me handler: returns user info if JWT in cookie is valid
 // Ensure tracing logs are visible: set RUST_LOG=info if not already set
@@ -66,51 +105,20 @@ pub async fn me(
         // fill other fields as needed
     };
 
+    // Fetch all pools (buckets) for the frontend using internal fetch method
+    let all_pools = match app_state.icm_client.fetch_all_pools().await {
+        Ok(pools) => pools,
+        Err(e) => {
+            tracing::error!("Failed to fetch all pools: {}", e);
+            vec![]
+        }
+    };
     let body = serde_json::json!({
         "user": user,
         "wallet_address": wallet_address,
+        "pools": all_pools
     });
-
     (StatusCode::OK, AxumJson(body))
-}
-use argon2::{Argon2, password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}};
-use argon2::password_hash::rand_core::OsRng;
-use solana_sdk::signature::Keypair;
-use solana_sdk::signature::Signer;
-use tokio_postgres::types::ToSql;
-use deadpool_postgres::Pool;
-use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use crate::auth::{jwt::JwtService, models::AuthUser};
-use uuid::Uuid;
-use crate::server::AppState;
-use crate::database::connection::DatabaseConfig;
-use chrono::Duration;
-
-#[derive(Deserialize)]
-pub struct RegisterRequest {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive(Deserialize)]
-pub struct LoginRequest {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive(Serialize)]
-pub struct Tokens {
-    pub accessToken: String,
-    pub expiresAt: i64,
-}
-
-#[derive(Serialize)]
-pub struct RegisterResponse {
-    pub user: AuthUser,
-    pub tokens: Tokens,
-    pub wallet_address: String,
 }
 
 pub async fn register(
@@ -169,12 +177,6 @@ pub async fn register(
     let claims = app_state.jwt_service.decode_claims(&access_token)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let expires_at = claims.exp;
-
-    use axum_extra::extract::cookie::{Cookie, SameSite};
-    use axum::response::{IntoResponse, Response};
-    use axum::http::{header, StatusCode};
-    use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
     // Set cookie attributes for cross-site refresh persistence
     // Use a consistent cookie name for frontend and backend
@@ -253,11 +255,14 @@ pub async fn login(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let expires_at = claims.exp;
 
-    use axum_extra::extract::cookie::{Cookie, SameSite};
-    use axum::response::{IntoResponse, Response};
-    use axum::http::{header, StatusCode};
-    use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH, Duration};
+    // Fetch all pools (buckets) for the frontend using internal fetch method
+    let all_pools = match app_state.icm_client.fetch_all_pools().await {
+        Ok(pools) => pools,
+        Err(e) => {
+            tracing::error!("Failed to fetch all pools: {}", e);
+            vec![]
+        }
+    };
 
     // Set cookie attributes for cross-site refresh persistence
     let mut cookie = Cookie::new("access_token", access_token.clone());
@@ -274,11 +279,12 @@ pub async fn login(
         cookie.set_max_age(time::Duration::seconds(max_age));
     }
 
-    // Return user info and wallet address, but NOT the token
+    // Return user info, wallet address, expiresAt, and pools
     let body = json!({
         "user": user,
         "wallet_address": wallet_address,
-        "expiresAt": expires_at
+        "expiresAt": expires_at,
+        "pools": all_pools
     });
     let response = Response::builder()
         .status(StatusCode::OK)
@@ -300,5 +306,4 @@ pub fn create_auth_routes() -> Router<AppState> {
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
-        // TODO: Add refresh endpoint
 }

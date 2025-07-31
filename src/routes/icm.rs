@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use axum::{Json, extract::{State, Extension}, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use crate::server::AppState;
@@ -15,16 +14,10 @@ use axum::response::Json as ResponseJson;
 use anyhow::Result;
 use anchor_lang::declare_program;
 use crate::onchain_instance::instance::{
-    IcmProgramInstance,
-    CreateBucketRequest as InstanceCreateBucketRequest,
-    ContributeToBucketRequest as InstanceContributeToBucketRequest,
-    StartTradingRequest as InstanceStartTradingRequest,
-    SwapTokensRequest as InstanceSwapTokensRequest,
-    ClaimRewardsRequest as InstanceClaimRewardsRequest,
-    CloseBucketRequest as InstanceCloseBucketRequest,
-    UnsignedTransactionResponse, GetBucketQuery, BucketInfo,
+    UnsignedTransactionResponse, GetBucketQuery, BucketInfo, BucketAccount
 };
 
+use std::convert::TryFrom;
 
 declare_program!(icm_program);
 const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
@@ -125,7 +118,6 @@ async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keyp
     };
     // Convert Vec<i32> to Vec<u8>
     let privkey_bytes: Vec<u8> = privkey_bytes.into_iter().map(|b| b as u8).collect();
-    use std::convert::TryFrom;
     Keypair::try_from(&privkey_bytes[..]).map_err(|_| "Invalid keypair bytes".to_string())
 }
 
@@ -133,35 +125,25 @@ async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keyp
 #[axum::debug_handler]
 pub async fn get_all_pools(
     State(state): State<AppState>,
-) -> impl IntoResponse {
-    use anchor_client::Program;
-    use icm_program::accounts::Bucket as AnchorBucket;
-    use crate::onchain_instance::instance::ICM_PROGRAM_ID;
-    let cluster = state.icm_client.cluster.clone();
-    let payer = solana_sdk::signature::Keypair::new();
-    use solana_sdk::commitment_config::CommitmentConfig;
-    let client = anchor_client::Client::new_with_options(cluster, std::sync::Arc::new(payer), CommitmentConfig::confirmed());
-    let program = client.program(ICM_PROGRAM_ID).unwrap();
-
-    // Fetch all bucket accounts
-    let result = program.accounts::<AnchorBucket>(vec![]);
-    let all_pools: Vec<BucketInfo> = match result.await {
-        Ok(buckets) => buckets.into_iter().map(|(_pubkey, data)| {
-            BucketInfo {
-                name: data.name,
-                creator_pubkey: data.creator.to_string(),
-                token_mints: data.token_mints.iter().map(|k| k.to_string()).collect(),
-                contribution_window_days: data.contribution_deadline as u32, // Cast i64 to u32
-                trading_window_days: data.trading_deadline as u32, // Cast i64 to u32
-                creator_fee_percent: data.creator_fee_percent,
-            }
-        }).collect(),
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>
+) -> ResponseJson<ApiResponse<Vec<BucketInfo>>> {
+    tracing::debug!("[get_all_pools] Fetching all pools");
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("Failed to fetch all pools: {}", e);
-            vec![]
+            tracing::error!("[get_all_pools] Failed to get user keypair: {}", e);
+            let error_response = ApiResponse::<Vec<BucketInfo>>::error(e.to_string());
+            return ResponseJson(error_response);
         }
     };
-    ResponseJson(ApiResponse::success(all_pools))
+    match state.icm_client.get_all_pools(keypair).await {
+        Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
+        Err(e) => {
+            tracing::error!("Failed to fetch all pools: {}", e);
+            ResponseJson(ApiResponse::<Vec<BucketInfo>>::error(e.to_string()))
+        }
+    }
 }
 
 /// Create bucket endpoint
@@ -171,10 +153,8 @@ pub async fn create_bucket(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<CreateBucketRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[create_bucket] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[create_bucket] Payload: name={}, token_mints={:?}, contribution_window_days={}, trading_window_days={}, creator_fee_percent={}", request.name, request.token_mints, request.contribution_window_days, request.trading_window_days, request.creator_fee_percent);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[create_bucket] Failed to get user keypair: {}", e);
@@ -182,21 +162,17 @@ pub async fn create_bucket(
             return ResponseJson(error_response);
         }
     };
-    let creator_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[create_bucket] Creator pubkey: {}", creator_pubkey);
-    let instance_request = InstanceCreateBucketRequest {
-        name: request.name.clone(),
-        token_mints: request.token_mints.clone(),
+    // Convert to instance::CreateBucketRequest
+    let instance_request = crate::onchain_instance::instance::CreateBucketRequest {
+        name: request.name,
+        token_mints: request.token_mints,
         contribution_window_days: request.contribution_window_days,
         trading_window_days: request.trading_window_days,
         creator_fee_percent: request.creator_fee_percent,
-        creator_pubkey,
+        creator_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.create_bucket_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[create_bucket] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[create_bucket] Create bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -212,10 +188,8 @@ pub async fn contribute_to_bucket(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<ContributeToBucketRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[contribute_to_bucket] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[contribute_to_bucket] Payload: bucket_name={}, token_mint={}, amount={}", request.bucket_name, request.token_mint, request.amount);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[contribute_to_bucket] Failed to get user keypair: {}", e);
@@ -223,19 +197,15 @@ pub async fn contribute_to_bucket(
             return ResponseJson(error_response);
         }
     };
-    let contributor_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[contribute_to_bucket] Contributor pubkey: {}", contributor_pubkey);
-    let instance_request = InstanceContributeToBucketRequest {
-        bucket_name: request.bucket_name.clone(),
-        token_mint: request.token_mint.clone(),
+    // Convert to instance::ContributeToBucketRequest
+    let instance_request = crate::onchain_instance::instance::ContributeToBucketRequest {
+        bucket_name: request.bucket_name,
+        token_mint: request.token_mint,
         amount: request.amount,
-        contributor_pubkey,
+        contributor_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.contribute_to_bucket_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[contribute_to_bucket] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[contribute_to_bucket] Contribute to bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -251,10 +221,8 @@ pub async fn start_trading(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<StartTradingRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[start_trading] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[start_trading] Payload: bucket_name={}", request.bucket_name);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[start_trading] Failed to get user keypair: {}", e);
@@ -262,17 +230,13 @@ pub async fn start_trading(
             return ResponseJson(error_response);
         }
     };
-    let creator_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[start_trading] Creator pubkey: {}", creator_pubkey);
-    let instance_request = InstanceStartTradingRequest {
-        bucket_name: request.bucket_name.clone(),
-        creator_pubkey,
+    // Convert to instance::StartTradingRequest
+    let instance_request = crate::onchain_instance::instance::StartTradingRequest {
+        bucket_name: request.bucket_name,
+        creator_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.start_trading_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[start_trading] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[start_trading] Start trading error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -288,10 +252,8 @@ pub async fn swap_tokens(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<SwapTokensRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[swap_tokens] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[swap_tokens] Payload: bucket={}, input_mint={}, output_mint={}, in_amount={}, quoted_out_amount={}, slippage_bps={}, platform_fee_bps={}, route_plan={:?}", request.bucket, request.input_mint, request.output_mint, request.in_amount, request.quoted_out_amount, request.slippage_bps, request.platform_fee_bps, request.route_plan);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[swap_tokens] Failed to get user keypair: {}", e);
@@ -299,26 +261,20 @@ pub async fn swap_tokens(
             return ResponseJson(error_response);
         }
     };
-    let creator_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[swap_tokens] Creator pubkey: {}", creator_pubkey);
-    let bucket_pubkey = Pubkey::from_str(&request.bucket).unwrap();
-    tracing::info!("[swap_tokens] Bucket pubkey: {}", bucket_pubkey);
-    let instance_request = InstanceSwapTokensRequest {
-        creator_pubkey,
-        bucket_pubkey: bucket_pubkey.to_string(),
-        input_mint: request.input_mint.clone(),
-        output_mint: request.output_mint.clone(),
+    // Convert to instance::SwapTokensRequest
+    let instance_request = crate::onchain_instance::instance::SwapTokensRequest {
+        bucket_pubkey: request.bucket,
+        input_mint: request.input_mint,
+        output_mint: request.output_mint,
         in_amount: request.in_amount,
         quoted_out_amount: request.quoted_out_amount,
         slippage_bps: request.slippage_bps,
         platform_fee_bps: request.platform_fee_bps,
-        route_plan: request.route_plan.clone(),
+        route_plan: request.route_plan,
+        creator_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.swap_tokens_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[swap_tokens] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[swap_tokens] Swap tokens error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -334,10 +290,8 @@ pub async fn claim_rewards(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<ClaimRewardsRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[claim_rewards] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[claim_rewards] Payload: bucket_name={}, token_mint={}", request.bucket_name, request.token_mint);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[claim_rewards] Failed to get user keypair: {}", e);
@@ -345,18 +299,14 @@ pub async fn claim_rewards(
             return ResponseJson(error_response);
         }
     };
-    let contributor_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[claim_rewards] Contributor pubkey: {}", contributor_pubkey);
-    let instance_request = InstanceClaimRewardsRequest {
-        bucket_name: request.bucket_name.clone(),
-        token_mint: request.token_mint.clone(),
-        contributor_pubkey,
+    // Convert to instance::ClaimRewardsRequest
+    let instance_request = crate::onchain_instance::instance::ClaimRewardsRequest {
+        bucket_name: request.bucket_name,
+        token_mint: request.token_mint,
+        contributor_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.claim_rewards_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[claim_rewards] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[claim_rewards] Claim rewards error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -372,10 +322,8 @@ pub async fn close_bucket(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<CloseBucketRequest>
 ) -> impl IntoResponse {
-    tracing::info!("[close_bucket] Request received: user_id={}, email={}", auth_user.id, auth_user.email);
-    tracing::info!("[close_bucket] Payload: bucket_name={}", request.bucket_name);
-    let email = &auth_user.email;
-    let keypair = match get_user_keypair_by_email(email, &state).await {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[close_bucket] Failed to get user keypair: {}", e);
@@ -383,17 +331,13 @@ pub async fn close_bucket(
             return ResponseJson(error_response);
         }
     };
-    let creator_pubkey = keypair.pubkey().to_string();
-    tracing::info!("[close_bucket] Creator pubkey: {}", creator_pubkey);
-    let instance_request = InstanceCloseBucketRequest {
-        bucket_name: request.bucket_name.clone(),
-        creator_pubkey,
+    // Convert to instance::CloseBucketRequest
+    let instance_request = crate::onchain_instance::instance::CloseBucketRequest {
+        bucket_name: request.bucket_name,
+        creator_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.close_bucket_transaction(instance_request, keypair).await {
-        Ok(response) => {
-            tracing::info!("[close_bucket] Transaction created successfully");
-            ResponseJson(ApiResponse::success(response))
-        },
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
             tracing::error!("[close_bucket] Close bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -410,13 +354,20 @@ pub async fn get_bucket(
 ) -> impl IntoResponse {
     // TODO: Implement actual bucket fetching
     let bucket_info = BucketInfo {
-        name: query.bucket_name,
-        creator_pubkey: query.creator_pubkey,
-        token_mints: vec![],
-        contribution_window_days: 0,
-        trading_window_days: 0,
-        creator_fee_percent: 0,
+        public_key: String::new(),
+        account: BucketAccount {
+            creator: query.creator_pubkey,
+            name: query.bucket_name,
+            token_mints: vec![],
+            contribution_deadline: String::new(),
+            trading_deadline: String::new(),
+            creator_fee_percent: 0,
+            status: String::new(),
+            total_contributions: String::new(),
+            trading_started_at: String::new(),
+            closed_at: String::new(),
+            bump: 0,
+        },
     };
-
     ResponseJson(ApiResponse::success(bucket_info))
 }

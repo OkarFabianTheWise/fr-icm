@@ -1,3 +1,94 @@
+impl IcmProgramInstance {
+    /// Fetch all pools (buckets) for internal use (not as an Axum handler)
+    pub async fn fetch_all_pools(&self) -> anyhow::Result<Vec<BucketInfo>> {
+        // You may want to pass a keypair or use a default/test keypair for read-only fetches
+        // For now, use a new ephemeral keypair (not for signing transactions)
+        let keypair = solana_sdk::signature::Keypair::new();
+        self.get_all_pools(keypair).await
+    }
+}
+// --- On-chain account structs matching Anchor definitions ---
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TradingPool {
+    pub pool_id: String,
+    pub pool_bump: u8,
+    pub creator: String,
+    pub token_bucket: Vec<String>,
+    pub target_amount: String,
+    pub min_contribution: String,
+    pub max_contribution: String,
+    pub trading_duration: String,
+    pub created_at: String,
+    pub fundraising_deadline: String,
+    pub trading_start_time: Option<String>,
+    pub trading_end_time: Option<String>,
+    pub phase: String,
+    pub raised_amount: String,
+    pub contributor_count: u32,
+    pub management_fee: u16,
+    pub performance_fee: u16,
+    pub trade_count: u32,
+    pub last_trade_time: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CreatorProfile {
+    pub creator: String,
+    pub pools_created: u32,
+    pub successful_pools: u32,
+    pub total_volume_managed: String,
+    pub reputation_score: u32,
+    pub created_at: String,
+}
+
+impl IcmProgramInstance {
+    /// Fetch a TradingPool by PDA (public key)
+    pub async fn fetch_trading_pool_by_pda(&self, pool_pda: &str) -> Result<TradingPool> {
+        let cluster = self.cluster.clone();
+        let client = Client::new(cluster, Arc::new(Keypair::new()));
+        let program = client.program(ICM_PROGRAM_ID)?;
+        let pda = Pubkey::from_str(pool_pda)?;
+        let anchor_pool: icm_program::accounts::TradingPool = program.account(pda).await?;
+        Ok(TradingPool {
+            pool_id: pool_pda.to_string(),
+            pool_bump: anchor_pool.pool_bump,
+            creator: anchor_pool.creator.to_string(),
+            token_bucket: anchor_pool.token_bucket.iter().map(|pk| pk.to_string()).collect(),
+            target_amount: anchor_pool.target_amount.to_string(),
+            min_contribution: anchor_pool.min_contribution.to_string(),
+            max_contribution: anchor_pool.max_contribution.to_string(),
+            trading_duration: anchor_pool.trading_duration.to_string(),
+            created_at: anchor_pool.created_at.to_string(),
+            fundraising_deadline: anchor_pool.fundraising_deadline.to_string(),
+            trading_start_time: anchor_pool.trading_start_time.map(|v| v.to_string()),
+            trading_end_time: anchor_pool.trading_end_time.map(|v| v.to_string()),
+            phase: format!("{:?}", anchor_pool.phase),
+            raised_amount: anchor_pool.raised_amount.to_string(),
+            contributor_count: anchor_pool.contributor_count,
+            management_fee: anchor_pool.management_fee,
+            performance_fee: anchor_pool.performance_fee,
+            trade_count: anchor_pool.trade_count,
+            last_trade_time: anchor_pool.last_trade_time.map(|v| v.to_string()),
+        })
+    }
+
+    /// Fetch a CreatorProfile by PDA (public key)
+    pub async fn fetch_creator_profile_by_pda(&self, creator_profile_pda: &str) -> Result<CreatorProfile> {
+        let cluster = self.cluster.clone();
+        let client = Client::new(cluster, Arc::new(Keypair::new()));
+        let program = client.program(ICM_PROGRAM_ID)?;
+        let pda = Pubkey::from_str(creator_profile_pda)?;
+        let anchor_profile: icm_program::accounts::CreatorProfile = program.account(pda).await?;
+        Ok(CreatorProfile {
+            creator: anchor_profile.creator.to_string(),
+            pools_created: anchor_profile.pools_created,
+            successful_pools: anchor_profile.successful_pools,
+            total_volume_managed: anchor_profile.total_volume_managed.to_string(),
+            reputation_score: anchor_profile.reputation_score,
+            created_at: anchor_profile.created_at.to_string(),
+        })
+    }
+}
 /// Main ICM program client instance
 #[derive(Debug, Clone)]
 pub struct IcmProgramInstance {
@@ -84,13 +175,25 @@ pub struct GetBucketQuery {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BucketInfo {
+pub struct BucketAccount {
+    pub creator: String,
     pub name: String,
-    pub creator_pubkey: String,
     pub token_mints: Vec<String>,
-    pub contribution_window_days: u32,
-    pub trading_window_days: u32,
+    pub contribution_deadline: String, // Use String for BN compatibility
+    pub trading_deadline: String,
     pub creator_fee_percent: u16,
+    pub status: String, // You may want to use a struct/enum for richer info
+    pub total_contributions: String,
+    pub trading_started_at: String,
+    pub closed_at: String,
+    pub bump: u8,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BucketInfo {
+    pub public_key: String,
+    pub account: BucketAccount,
+
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -101,6 +204,85 @@ pub struct UnsignedTransactionResponse {
 
 
 impl IcmProgramInstance {
+    /// Get all pools (buckets) - stub implementation
+    pub async fn get_all_pools(&self, keypair: Keypair) -> Result<Vec<BucketInfo>> {
+        let cluster = self.cluster.clone();
+        let keypair_for_client = keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        // Fetch all Bucket accounts
+        let bucket_accounts = program.accounts::<icm_program::accounts::Bucket>(vec![]).await?;
+
+        let buckets: Vec<BucketInfo> = bucket_accounts
+            .into_iter()
+            .map(|(pubkey, anchor_bucket)| BucketInfo {
+                public_key: pubkey.to_string(),
+                account: BucketAccount {
+                    creator: anchor_bucket.creator.to_string(),
+                    name: anchor_bucket.name.clone(),
+                    token_mints: anchor_bucket.token_mints.iter().map(|pk| pk.to_string()).collect(),
+                    contribution_deadline: anchor_bucket.contribution_deadline.to_string(),
+                    trading_deadline: anchor_bucket.trading_deadline.to_string(),
+                    creator_fee_percent: anchor_bucket.creator_fee_percent,
+                    status: format!("{:?}", anchor_bucket.status),
+                    total_contributions: anchor_bucket.total_contributions.to_string(),
+                    trading_started_at: anchor_bucket.trading_started_at.to_string(),
+                    closed_at: anchor_bucket.closed_at.to_string(),
+                    bump: anchor_bucket.bump,
+                },
+            })
+            .collect();
+
+        for bucket in &buckets {
+            println!("Bucket: {:?}", bucket);
+        }
+        Ok(buckets)
+    }
+
+    /// Start trading transaction for frontend signing
+    pub async fn start_trading_transaction(
+        &self,
+        request: StartTradingRequest,
+        keypair: Keypair
+    ) -> Result<UnsignedTransactionResponse> {
+        let cluster = self.cluster.clone();
+        let keypair_for_client = keypair.insecure_clone();
+        let keypair_for_sign = keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
+        let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
+        let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
+
+        let accounts = vec![
+            AccountMeta::new(bucket_pda, true),
+            AccountMeta::new(trading_pool_pda, true),
+            AccountMeta::new(creator, true),
+        ];
+
+        let ixs = program
+            .request()
+            .accounts(accounts)
+            .args(StartTrading {
+                bucket_name: request.bucket_name.clone(),
+            })
+            .instructions()?;
+        let recent_blockhash = program.rpc().get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&creator),
+            &[&keypair_for_sign],
+            recent_blockhash,
+        );
+        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
+
+        Ok(UnsignedTransactionResponse {
+            transaction: sig.to_string(),
+            message: format!("Start trading for bucket '{}'", request.bucket_name),
+        })
+    }
     fn encode_response(&self, sig: String, message: String) -> UnsignedTransactionResponse {
         UnsignedTransactionResponse { transaction: sig, message }
     }
@@ -247,7 +429,7 @@ impl IcmProgramInstance {
         let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
         let program = client.program(ICM_PROGRAM_ID)?;
 
-        let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
+        let creator = Pubkey::from_str(&request.contributor_pubkey).map_err(|e| anyhow!(e))?;
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
 
@@ -285,7 +467,6 @@ impl IcmProgramInstance {
         request: SwapTokensRequest,
         keypair: Keypair
     ) -> Result<UnsignedTransactionResponse> {
-        // ...existing code...
         let cluster = self.cluster.clone();
         let keypair_for_client = keypair.insecure_clone();
         let keypair_for_sign = keypair.insecure_clone();
