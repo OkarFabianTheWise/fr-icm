@@ -1,4 +1,55 @@
+use anchor_client::{Client, Cluster};
+use anchor_lang::prelude::*;
+use std::sync::Arc;
+use std::str::FromStr;
+use anyhow::{anyhow, Result};
+use solana_sdk::{
+    commitment_config::CommitmentConfig,
+    pubkey::Pubkey,
+    signature::Keypair,
+    signer::Signer,
+    system_program,
+};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use solana_sdk::transaction::Transaction;
+declare_program!(icm_program);
+pub const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
+
+use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, SwapTokens, ClaimRewards, CloseBucket};
+
 impl IcmProgramInstance {
+    /// Fetch a TradingPool by PDA (public key)
+    pub async fn get_trading_pool(&self, pool_pubkey: &str) -> anyhow::Result<TradingPool> {
+        use std::str::FromStr;
+        let cluster = self.cluster.clone();
+        let client = Client::new(cluster, Arc::new(Keypair::new()));
+        let program = client.program(ICM_PROGRAM_ID)?;
+        let pda = Pubkey::from_str(pool_pubkey)?;
+        let anchor_pool: icm_program::accounts::TradingPool = program.account(pda).await?;
+        Ok(TradingPool {
+            pool_id: pool_pubkey.to_string(),
+            pool_bump: anchor_pool.pool_bump,
+            creator: anchor_pool.creator.to_string(),
+            token_bucket: anchor_pool.token_bucket.iter().map(|pk| pk.to_string()).collect(),
+            target_amount: anchor_pool.target_amount.to_string(),
+            min_contribution: anchor_pool.min_contribution.to_string(),
+            max_contribution: anchor_pool.max_contribution.to_string(),
+            trading_duration: anchor_pool.trading_duration.to_string(),
+            created_at: anchor_pool.created_at.to_string(),
+            fundraising_deadline: anchor_pool.fundraising_deadline.to_string(),
+            trading_start_time: anchor_pool.trading_start_time.map(|v| v.to_string()),
+            trading_end_time: anchor_pool.trading_end_time.map(|v| v.to_string()),
+            phase: format!("{:?}", anchor_pool.phase),
+            raised_amount: anchor_pool.raised_amount.to_string(),
+            contributor_count: anchor_pool.contributor_count,
+            management_fee: anchor_pool.management_fee,
+            performance_fee: anchor_pool.performance_fee,
+            trade_count: anchor_pool.trade_count,
+            last_trade_time: anchor_pool.last_trade_time.map(|v| v.to_string()),
+        })
+    }
+
     /// Fetch all pools (buckets) for internal use (not as an Axum handler)
     pub async fn fetch_all_pools(&self) -> anyhow::Result<Vec<BucketInfo>> {
         // You may want to pass a keypair or use a default/test keypair for read-only fetches
@@ -7,6 +58,7 @@ impl IcmProgramInstance {
         self.get_all_pools(keypair).await
     }
 }
+
 // --- On-chain account structs matching Anchor definitions ---
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TradingPool {
@@ -98,34 +150,26 @@ pub struct IcmProgramInstance {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct CreateBucketRequest {
-    pub name: String,
-    pub token_mints: Vec<String>,
-    pub contribution_window_days: u32,
-    pub trading_window_days: u32,
-    pub creator_fee_percent: u16,
-    pub creator_pubkey: String,
-}
-
-use anchor_client::{Client, Cluster};
-use anchor_lang::prelude::*;
-use std::sync::Arc;
-use std::str::FromStr;
-use anyhow::{anyhow, Result};
-use solana_sdk::{
-    commitment_config::CommitmentConfig,
-    pubkey::Pubkey,
-    signature::Keypair,
-    signer::Signer,
-    system_program,
+    pub pool_id: String, // Keep as String for API compatibility
+    pub pool_bump: u8,
+    pub creator: String, // Pubkey as base58 string
+    pub token_bucket: Vec<String>, // Vec<Pubkey> as base58 strings
+    pub target_amount: u64,
+    pub min_contribution: u64,
+    pub max_contribution: u64,
+    pub trading_duration: u64,
+    pub created_at: i64,
+    pub fundraising_deadline: i64,
+    pub trading_start_time: Option<i64>,
+    pub trading_end_time: Option<i64>,
+    pub phase: String, // Keep as String for now
+    pub raised_amount: u64,
+    pub contributor_count: u32,
+    pub management_fee: u16,
+    pub performance_fee: u16,
+    pub trade_count: u32,
+    pub last_trade_time: Option<i64>,
 };
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
-use solana_sdk::transaction::Transaction;
-
-declare_program!(icm_program);
-pub const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
-
-use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, SwapTokens, ClaimRewards, CloseBucket};
 
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -133,13 +177,16 @@ pub struct ContributeToBucketRequest {
     pub bucket_name: String,
     pub token_mint: String,
     pub amount: u64,
-    pub contributor_pubkey: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct StartTradingRequest {
-    pub bucket_name: String,
-    pub creator_pubkey: String,
+    target_amount: anchor_pool.target_amount,
+    min_contribution: anchor_pool.min_contribution,
+    max_contribution: anchor_pool.max_contribution,
+    trading_duration: anchor_pool.trading_duration,
+    created_at: anchor_pool.created_at,
+    fundraising_deadline: anchor_pool.fundraising_deadline,
+    trading_start_time: anchor_pool.trading_start_time,
+    trading_end_time: anchor_pool.trading_end_time,
+    phase: format!("{:?}", anchor_pool.phase), // Keep as String for now
+    raised_amount: anchor_pool.raised_amount,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -240,6 +287,27 @@ impl IcmProgramInstance {
         Ok(buckets)
     }
 
+    /// get_trading_pool - fetch trading pool info by bucket name and creator
+    pub async fn get_trading_pool(
+        &self,
+        request: GetBucketQuery,
+        keypair: Keypair
+    ) -> Result<Vec<BucketInfo>> {
+        let cluster = self.cluster.clone();
+        let keypair_for_client = keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+        let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
+
+        // bucket pda
+        let (bucket_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
+
+        let trading_pool_account: icm_program::accounts::TradingPool = program.account(bucket_pda).await?;
+        tracing::debug!("[get_trading_pool] Trading pool account: {:?}", trading_pool_account);
+
+        self.get_trading_pool(bucket_pda, keypair).await
+    }
+
     /// Start trading transaction for frontend signing
     pub async fn start_trading_transaction(
         &self,
@@ -275,45 +343,40 @@ impl IcmProgramInstance {
             Some(&creator),
             &[&keypair_for_sign],
             recent_blockhash,
-        );
-        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
-
-        Ok(UnsignedTransactionResponse {
-            transaction: sig.to_string(),
-            message: format!("Start trading for bucket '{}'", request.bucket_name),
-        })
-    }
-    fn encode_response(&self, sig: String, message: String) -> UnsignedTransactionResponse {
-        UnsignedTransactionResponse { transaction: sig, message }
-    }
-}
-
-
-impl IcmProgramInstance {
-    /// Create a new instance of the ICM program client
-    pub fn new(cluster: Cluster, payer: Keypair) -> Result<Self> {
-        Ok(Self {
-            cluster,
-            payer_pubkey: payer.pubkey(),
-        })
-    }
-
-    /// Create bucket transaction for frontend signing
-    pub async fn create_bucket_transaction(
-        &self,
-        request: CreateBucketRequest,
-        keypair: Keypair
-    ) -> Result<UnsignedTransactionResponse> {
+    pub async fn get_trading_pool(&self, pool_pubkey: &str) -> anyhow::Result<TradingPool> {
         let cluster = self.cluster.clone();
-        let keypair_for_client = keypair.insecure_clone();
-        let keypair_for_sign = keypair.insecure_clone();
-        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let client = Client::new(cluster, Arc::new(Keypair::new()));
         let program = client.program(ICM_PROGRAM_ID)?;
+        let pda = Pubkey::from_str(pool_pubkey)?;
+        let anchor_pool: icm_program::accounts::TradingPool = program.account(pda).await?;
+        Ok(TradingPool {
+            pool_id: pool_pubkey.to_string(),
+            pool_bump: anchor_pool.pool_bump,
+            creator: anchor_pool.creator.to_string(),
+            token_bucket: anchor_pool.token_bucket.iter().map(|pk| pk.to_string()).collect(),
+            target_amount: anchor_pool.target_amount.to_string(),
+            min_contribution: anchor_pool.min_contribution.to_string(),
+            max_contribution: anchor_pool.max_contribution.to_string(),
+            trading_duration: anchor_pool.trading_duration.to_string(),
+            created_at: anchor_pool.created_at.to_string(),
+            fundraising_deadline: anchor_pool.fundraising_deadline.to_string(),
+            trading_start_time: anchor_pool.trading_start_time.map(|v| v.to_string()),
+            trading_end_time: anchor_pool.trading_end_time.map(|v| v.to_string()),
+            phase: format!("{:?}", anchor_pool.phase),
+            raised_amount: anchor_pool.raised_amount.to_string(),
+            contributor_count: anchor_pool.contributor_count,
+            management_fee: anchor_pool.management_fee,
+            performance_fee: anchor_pool.performance_fee,
+            trade_count: anchor_pool.trade_count,
+            last_trade_time: anchor_pool.last_trade_time.map(|v| v.to_string()),
+        })
+    }
 
-        let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
-        let token_mints: Vec<Pubkey> = request.token_mints.iter().map(|m| Pubkey::from_str(m).unwrap()).collect();
-
-        // Derive PDAs for bucket, trading_pool, creator_profile
+    /// Fetch all pools (buckets) for internal use (not as an Axum handler)
+    pub async fn fetch_all_pools(&self) -> anyhow::Result<Vec<BucketInfo>> {
+        let keypair = solana_sdk::signature::Keypair::new();
+        self.get_all_pools(keypair).await
+    }
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);

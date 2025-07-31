@@ -123,6 +123,31 @@ async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keyp
 
 /// Get all pools (buckets) endpoint
 #[axum::debug_handler]
+pub async fn get_trading_pool(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>
+) -> ResponseJson<ApiResponse<Vec<BucketInfo>>> {
+    tracing::debug!("[get_trading_pool] Fetching trading pools");
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("[get_trading_pool] Failed to get user keypair: {}", e);
+            let error_response = ApiResponse::<Vec<BucketInfo>>::error(e.to_string());
+            return ResponseJson(error_response);
+        }
+    };
+
+    match state.icm_client.get_trading_pool(&request, keypair).await {
+        Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
+        Err(e) => {
+            tracing::error!("Failed to fetch all pools: {}", e);
+            ResponseJson(ApiResponse::<Vec<BucketInfo>>::error(e.to_string()))
+        }
+    }
+}
+
+#[axum::debug_handler]
 pub async fn get_all_pools(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>

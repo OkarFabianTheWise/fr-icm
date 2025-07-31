@@ -1,5 +1,5 @@
 {
-  "address": "ChzF1fiEZ8Uo2q62dg2f8MJSQW2oDxw4PJcbWiC1pxQe",
+  "address": "DQn5cD3rcNS9DoFbb3ryF17E7x2UMED2iDcqNUktSwAa",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -1140,6 +1140,14 @@
           {
             "name": "bump",
             "type": "u8"
+          },
+          {
+            "name": "creator_profile",
+            "type": "pubkey"
+          },
+          {
+            "name": "performance_fee",
+            "type": "u16"
           }
         ]
       }
@@ -1355,10 +1363,6 @@
           {
             "name": "creator",
             "type": "pubkey"
-          },
-          {
-            "name": "strategy_description",
-            "type": "string"
           },
           {
             "name": "token_bucket",
