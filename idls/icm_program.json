@@ -1,5 +1,5 @@
 {
-  "address": "DQn5cD3rcNS9DoFbb3ryF17E7x2UMED2iDcqNUktSwAa",
+  "address": "5sGq9V7fKHbG33NxTsqiNn5VLcbvP2MvMCq4wwc8EwKa",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -562,6 +562,171 @@
           }
         },
         {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "usdc_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "creator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "token_mints",
+          "type": {
+            "vec": "pubkey"
+          }
+        },
+        {
+          "name": "contribution_window_days",
+          "type": "u32"
+        },
+        {
+          "name": "trading_window_days",
+          "type": "u32"
+        },
+        {
+          "name": "creator_fee_percent",
+          "type": "u16"
+        },
+        {
+          "name": "target_amount",
+          "type": "u64"
+        },
+        {
+          "name": "min_contribution",
+          "type": "u64"
+        },
+        {
+          "name": "max_contribution",
+          "type": "u64"
+        },
+        {
+          "name": "management_fee",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "create_profile",
+      "discriminator": [
+        225,
+        205,
+        234,
+        143,
+        17,
+        186,
+        50,
+        220
+      ],
+      "accounts": [
+        {
           "name": "creator_profile",
           "writable": true,
           "pda": {
@@ -603,30 +768,7 @@
           "address": "11111111111111111111111111111111"
         }
       ],
-      "args": [
-        {
-          "name": "name",
-          "type": "string"
-        },
-        {
-          "name": "token_mints",
-          "type": {
-            "vec": "pubkey"
-          }
-        },
-        {
-          "name": "contribution_window_days",
-          "type": "u32"
-        },
-        {
-          "name": "trading_window_days",
-          "type": "u32"
-        },
-        {
-          "name": "creator_fee_percent",
-          "type": "u16"
-        }
-      ]
+      "args": []
     },
     {
       "name": "start_trading",
@@ -1083,6 +1225,21 @@
       "code": 6024,
       "name": "InvalidSwapAmount",
       "msg": "Invalid swap amount"
+    },
+    {
+      "code": 6025,
+      "name": "Overflow",
+      "msg": "Overflow occurred during arithmetic operation"
+    },
+    {
+      "code": 6026,
+      "name": "ProfileAlreadyExists",
+      "msg": "Profile already exists for this creator"
+    },
+    {
+      "code": 6027,
+      "name": "ProfileDoesNotExist",
+      "msg": "Profile does not exist for this creator"
     }
   ],
   "types": [
@@ -1148,6 +1305,14 @@
           {
             "name": "performance_fee",
             "type": "u16"
+          },
+          {
+            "name": "raised_amount",
+            "type": "u64"
+          },
+          {
+            "name": "contributor_count",
+            "type": "u32"
           }
         ]
       }
@@ -1247,10 +1412,6 @@
             "type": "u64"
           },
           {
-            "name": "contribution_timestamp",
-            "type": "i64"
-          },
-          {
             "name": "pool_share_percentage",
             "type": "u64"
           },
@@ -1318,10 +1479,6 @@
           {
             "name": "amount_out",
             "type": "u64"
-          },
-          {
-            "name": "slippage",
-            "type": "u16"
           },
           {
             "name": "success",
@@ -1415,30 +1572,8 @@
             }
           },
           {
-            "name": "raised_amount",
-            "type": "u64"
-          },
-          {
-            "name": "contributor_count",
-            "type": "u32"
-          },
-          {
             "name": "management_fee",
             "type": "u16"
-          },
-          {
-            "name": "performance_fee",
-            "type": "u16"
-          },
-          {
-            "name": "trade_count",
-            "type": "u32"
-          },
-          {
-            "name": "last_trade_time",
-            "type": {
-              "option": "i64"
-            }
           }
         ]
       }

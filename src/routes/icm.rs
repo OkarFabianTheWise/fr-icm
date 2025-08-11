@@ -13,66 +13,40 @@ use axum::http::StatusCode;
 use axum::response::Json as ResponseJson;
 use anyhow::Result;
 use anchor_lang::declare_program;
-use crate::onchain_instance::instance::{
-    UnsignedTransactionResponse, GetBucketQuery, BucketInfo, BucketAccount
-};
+
+use crate::state_structs::{CreateBucketRequest,
+UnsignedTransactionResponse, GetBucketQuery, BucketInfo, BucketAccount, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ContributeToBucketRequest, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
 
 use std::convert::TryFrom;
 
 declare_program!(icm_program);
 const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
 
-// --- Request structs ---
-#[derive(Deserialize)]
-pub struct CreateBucketRequest {
-    pub name: String,
-    pub token_mints: Vec<String>, // base58 pubkeys
-    pub contribution_window_days: u32,
-    pub trading_window_days: u32,
-    pub creator_fee_percent: u16,
+
+// Conversion from icm_program::accounts::TradingPool to local TradingPool
+impl From<icm_program::accounts::TradingPool> for TradingPool {
+    fn from(src: icm_program::accounts::TradingPool) -> Self {
+        TradingPool {
+            pool_id: src.pool_id.to_string(),
+            pool_bump: src.pool_bump,
+            creator: src.creator.to_string(),
+            token_bucket: src.token_bucket.into_iter().map(|pk| pk.to_string()).collect(),
+            target_amount: src.target_amount.to_string(),
+            min_contribution: src.min_contribution.to_string(),
+            max_contribution: src.max_contribution.to_string(),
+            trading_duration: src.trading_duration.to_string(),
+            created_at: src.created_at.to_string(),
+            fundraising_deadline: src.fundraising_deadline.to_string(),
+            trading_start_time: src.trading_start_time.map(|v| v.to_string()),
+            trading_end_time: src.trading_end_time.map(|v| v.to_string()),
+            phase: format!("{:?}", src.phase),
+            management_fee: src.management_fee,
+            raised_amount: None,
+            contribution_percent: None,
+        }
+    }
 }
 
-#[derive(Deserialize)]
-pub struct ContributeToBucketRequest {
-    pub bucket_name: String,
-    pub token_mint: String,
-    pub amount: u64,
-}
-
-#[derive(Deserialize)]
-pub struct StartTradingRequest {
-    pub bucket_name: String,
-}
-
-#[derive(Deserialize)]
-pub struct SwapTokensRequest {
-    pub bucket: String,
-    pub input_mint: String,
-    pub output_mint: String,
-    pub in_amount: u64,
-    pub quoted_out_amount: u64,
-    pub slippage_bps: u16,
-    pub platform_fee_bps: u16,
-    pub route_plan: Vec<u8>,
-}
-
-#[derive(Deserialize)]
-pub struct ClaimRewardsRequest {
-    pub bucket_name: String,
-    pub token_mint: String,
-}
-
-#[derive(Deserialize)]
-pub struct CloseBucketRequest {
-    pub bucket_name: String,
-}
-
-#[derive(Serialize)]
-pub struct TxResponse {
-    pub success: bool,
-    pub tx_signature: Option<String>,
-    pub error: Option<String>,
-}
 
 /// Standard API response wrapper
 #[derive(Serialize)]
@@ -101,7 +75,7 @@ impl<T> ApiResponse<T> {
 }
 
 // --- Helper: Get user keypair from DB by email ---
-async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keypair, String> {
+pub async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keypair, String> {
     // Fetch private_key from user_profiles by email (as in auth.rs)
     let pool = state.db.pool();
     let client = pool.get().await.map_err(|_| "DB connection error".to_string())?;
@@ -121,34 +95,92 @@ async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<Keyp
     Keypair::try_from(&privkey_bytes[..]).map_err(|_| "Invalid keypair bytes".to_string())
 }
 
+/// Create profile endpoint
+#[axum::debug_handler]
+pub async fn create_profile(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>
+) -> ResponseJson<ApiResponse<UnsignedTransactionResponse>> {
+    tracing::debug!("[create_profile] Creating profile for user {}", auth_user.email);
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("[create_profile] Failed to get user keypair: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    match state.icm_client.create_profile_transaction(keypair).await {
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
+        Err(e) => {
+            tracing::error!("[create_profile] Create profile error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
+            ResponseJson(error_response)
+        }
+    }
+}
+
 /// Get all pools (buckets) endpoint
 #[axum::debug_handler]
 pub async fn get_trading_pool(
     State(state): State<AppState>,
-    Extension(auth_user): Extension<crate::auth::models::AuthUser>
-) -> ResponseJson<ApiResponse<Vec<BucketInfo>>> {
-    tracing::debug!("[get_trading_pool] Fetching trading pools");
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>,
+    Query(query): Query<GetBucketQuery>,
+) -> ResponseJson<ApiResponse<TradingPool>> {
+    tracing::debug!("[get_trading_pool] Fetching trading pool for {}", query.bucket_name);
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
             tracing::error!("[get_trading_pool] Failed to get user keypair: {}", e);
-            let error_response = ApiResponse::<Vec<BucketInfo>>::error(e.to_string());
+            let error_response = ApiResponse::<TradingPool>::error(e.to_string());
             return ResponseJson(error_response);
         }
     };
-
-    match state.icm_client.get_trading_pool(&request, keypair).await {
-        Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
+    let raised_amount = query.raised_amount.clone();
+    match state.icm_client.fetch_trading_pool_by_pda(query, keypair).await {
+        Ok(pool) => {
+            // Calculate contribution_percent if raised_amount is provided
+            let (contribution_percent, raised_amount_str) = if let Some(raised) = raised_amount {
+                // Both raised and target_amount are strings, try to parse as f64
+                let raised_f = raised.parse::<f64>().unwrap_or(0.0);
+                let target_f = pool.target_amount.parse::<f64>().unwrap_or(0.0);
+                let percent = if target_f > 0.0 { (raised_f / target_f) * 100.0 } else { 0.0 };
+                (Some(percent), Some(raised))
+            } else {
+                (None, None)
+            };
+            let mapped = TradingPool {
+                pool_id: pool.pool_id,
+                pool_bump: pool.pool_bump,
+                creator: pool.creator,
+                token_bucket: pool.token_bucket,
+                target_amount: pool.target_amount,
+                min_contribution: pool.min_contribution,
+                max_contribution: pool.max_contribution,
+                trading_duration: pool.trading_duration,
+                created_at: pool.created_at,
+                fundraising_deadline: pool.fundraising_deadline,
+                trading_start_time: pool.trading_start_time,
+                trading_end_time: pool.trading_end_time,
+                phase: pool.phase,
+                management_fee: pool.management_fee,
+                // Add new fields
+                raised_amount: raised_amount_str,
+                contribution_percent,
+            };
+            ResponseJson(ApiResponse::success(mapped))
+        },
         Err(e) => {
-            tracing::error!("Failed to fetch all pools: {}", e);
-            ResponseJson(ApiResponse::<Vec<BucketInfo>>::error(e.to_string()))
+            tracing::error!("Failed to fetch trading pool: {}", e);
+            ResponseJson(ApiResponse::<TradingPool>::error(e.to_string()))
         }
     }
 }
 
 #[axum::debug_handler]
-pub async fn get_all_pools(
+pub async fn get_all_pools_by_pda(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>
 ) -> ResponseJson<ApiResponse<Vec<BucketInfo>>> {
@@ -162,11 +194,66 @@ pub async fn get_all_pools(
             return ResponseJson(error_response);
         }
     };
-    match state.icm_client.get_all_pools(keypair).await {
+    match state.icm_client.get_all_pools_by_pda(keypair).await {
         Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
         Err(e) => {
             tracing::error!("Failed to fetch all pools: {}", e);
             ResponseJson(ApiResponse::<Vec<BucketInfo>>::error(e.to_string()))
+        }
+    }
+}
+
+/// Get trading pool info endpoint
+#[axum::debug_handler]
+pub async fn get_trading_pool_info(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>,
+    Query(query): Query<GetBucketQuery>
+) -> ResponseJson<ApiResponse<TradingPool>> {
+    tracing::debug!("[get_trading_pool_info] Fetching trading pool info for {}", query.bucket_name);
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("[get_trading_pool_info] Failed to get user keypair: {}", e);
+            let error_response = ApiResponse::<TradingPool>::error(e.to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    match state.icm_client.fetch_trading_pool_by_pda(query.clone(), keypair).await {
+        Ok(pool_info) => {
+            // Calculate contribution_percent if raised_amount is provided
+            let (contribution_percent, raised_amount_str) = if let Some(raised) = query.raised_amount.clone() {
+                let raised_f = raised.parse::<f64>().unwrap_or(0.0);
+                let target_f = pool_info.target_amount.parse::<f64>().unwrap_or(0.0);
+                let percent = if target_f > 0.0 { (raised_f / target_f) * 100.0 } else { 0.0 };
+                (Some(percent), Some(raised))
+            } else {
+                (None, None)
+            };
+            let mapped = TradingPool {
+                pool_id: pool_info.pool_id,
+                pool_bump: pool_info.pool_bump,
+                creator: pool_info.creator,
+                token_bucket: pool_info.token_bucket,
+                target_amount: pool_info.target_amount,
+                min_contribution: pool_info.min_contribution,
+                max_contribution: pool_info.max_contribution,
+                trading_duration: pool_info.trading_duration,
+                created_at: pool_info.created_at,
+                fundraising_deadline: pool_info.fundraising_deadline,
+                trading_start_time: pool_info.trading_start_time,
+                trading_end_time: pool_info.trading_end_time,
+                phase: pool_info.phase,
+                management_fee: pool_info.management_fee,
+                raised_amount: raised_amount_str,
+                contribution_percent,
+            };
+            ResponseJson(ApiResponse::success(mapped))
+        },
+        Err(e) => {
+            tracing::error!("[get_trading_pool_info] Error fetching trading pool info: {}", e);
+            ResponseJson(ApiResponse::<TradingPool>::error(e.to_string()))
         }
     }
 }
@@ -187,14 +274,56 @@ pub async fn create_bucket(
             return ResponseJson(error_response);
         }
     };
+
+    // Check if creator profile exists, create if not
+    let creator_query = GetCreatorProfileQuery {
+        creator_pubkey: keypair.pubkey().to_string(),
+    };
+    
+    match state.icm_client.fetch_creator_profile_by_pda(creator_query, keypair.insecure_clone()).await {
+        Ok(_) => {
+            tracing::info!("[create_bucket] Creator profile exists, proceeding with bucket creation");
+        },
+        Err(e) => {
+            let error_str = e.to_string();
+            // Only try to create if it's actually missing (not other errors)
+            if error_str.contains("Account does not exist") || error_str.contains("AccountNotFound") {
+                tracing::info!("[create_bucket] Creator profile doesn't exist, creating it first");
+                match state.icm_client.create_profile_transaction(keypair.insecure_clone()).await {
+                    Ok(profile_response) => {
+                        tracing::info!("[create_bucket] Creator profile created: {}", profile_response.transaction);
+                    },
+                    Err(create_err) => {
+                        let create_error_str = create_err.to_string();
+                        // If it's "already in use", the profile actually exists, so continue
+                        if create_error_str.contains("already in use") || create_error_str.contains("custom program error: 0x0") {
+                            tracing::info!("[create_bucket] Creator profile already exists (race condition), continuing");
+                        } else {
+                            tracing::error!("[create_bucket] Failed to create creator profile: {}", create_err);
+                            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(
+                                format!("Failed to create creator profile: {}", create_err)
+                            );
+                            return ResponseJson(error_response);
+                        }
+                    }
+                }
+            } else {
+                tracing::info!("[create_bucket] Creator profile fetch failed with non-missing error, assuming it exists: {}", error_str);
+            }
+        }
+    }
+
     // Convert to instance::CreateBucketRequest
-    let instance_request = crate::onchain_instance::instance::CreateBucketRequest {
+    let instance_request = CreateBucketRequest {
         name: request.name,
         token_mints: request.token_mints,
         contribution_window_days: request.contribution_window_days,
         trading_window_days: request.trading_window_days,
         creator_fee_percent: request.creator_fee_percent,
-        creator_pubkey: keypair.pubkey().to_string(),
+        target_amount: request.target_amount,
+        min_contribution: request.min_contribution,
+        max_contribution: request.max_contribution,
+        management_fee: request.management_fee,
     };
     match state.icm_client.create_bucket_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -223,11 +352,10 @@ pub async fn contribute_to_bucket(
         }
     };
     // Convert to instance::ContributeToBucketRequest
-    let instance_request = crate::onchain_instance::instance::ContributeToBucketRequest {
+    let instance_request = ContributeToBucketRequest {
         bucket_name: request.bucket_name,
-        token_mint: request.token_mint,
         amount: request.amount,
-        contributor_pubkey: keypair.pubkey().to_string(),
+        creator_pubkey: request.creator_pubkey.clone(),
     };
     match state.icm_client.contribute_to_bucket_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -256,9 +384,8 @@ pub async fn start_trading(
         }
     };
     // Convert to instance::StartTradingRequest
-    let instance_request = crate::onchain_instance::instance::StartTradingRequest {
-        bucket_name: request.bucket_name,
-        creator_pubkey: keypair.pubkey().to_string(),
+    let instance_request = StartTradingRequest {
+        bucket_name: request.bucket_name.clone(),
     };
     match state.icm_client.start_trading_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -287,8 +414,8 @@ pub async fn swap_tokens(
         }
     };
     // Convert to instance::SwapTokensRequest
-    let instance_request = crate::onchain_instance::instance::SwapTokensRequest {
-        bucket_pubkey: request.bucket,
+    let instance_request = SwapTokensRequest {
+        bucket: request.bucket,
         input_mint: request.input_mint,
         output_mint: request.output_mint,
         in_amount: request.in_amount,
@@ -296,7 +423,6 @@ pub async fn swap_tokens(
         slippage_bps: request.slippage_bps,
         platform_fee_bps: request.platform_fee_bps,
         route_plan: request.route_plan,
-        creator_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.swap_tokens_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -325,10 +451,9 @@ pub async fn claim_rewards(
         }
     };
     // Convert to instance::ClaimRewardsRequest
-    let instance_request = crate::onchain_instance::instance::ClaimRewardsRequest {
+    let instance_request = ClaimRewardsRequest {
         bucket_name: request.bucket_name,
         token_mint: request.token_mint,
-        contributor_pubkey: keypair.pubkey().to_string(),
     };
     match state.icm_client.claim_rewards_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -357,7 +482,7 @@ pub async fn close_bucket(
         }
     };
     // Convert to instance::CloseBucketRequest
-    let instance_request = crate::onchain_instance::instance::CloseBucketRequest {
+    let instance_request = CloseBucketRequest {
         bucket_name: request.bucket_name,
         creator_pubkey: keypair.pubkey().to_string(),
     };
@@ -371,28 +496,3 @@ pub async fn close_bucket(
     }
 }
 
-/// Get bucket info endpoint (placeholder)
-#[axum::debug_handler]
-pub async fn get_bucket(
-    State(_state): State<AppState>,
-    Query(query): Query<GetBucketQuery>
-) -> impl IntoResponse {
-    // TODO: Implement actual bucket fetching
-    let bucket_info = BucketInfo {
-        public_key: String::new(),
-        account: BucketAccount {
-            creator: query.creator_pubkey,
-            name: query.bucket_name,
-            token_mints: vec![],
-            contribution_deadline: String::new(),
-            trading_deadline: String::new(),
-            creator_fee_percent: 0,
-            status: String::new(),
-            total_contributions: String::new(),
-            trading_started_at: String::new(),
-            closed_at: String::new(),
-            bump: 0,
-        },
-    };
-    ResponseJson(ApiResponse::success(bucket_info))
-}

@@ -9,7 +9,12 @@ use tracing::{info, warn, error, debug};
 use chrono::Utc;
 
 use crate::agent::types::{TradingPlan, AgentError, ExecutionSettings};
-use crate::onchain_instance::instance::{IcmProgramInstance, SwapTokensRequest, UnsignedTransactionResponse};
+use crate::state_structs::{SwapTokensRequest, UnsignedTransactionResponse};
+use crate::onchain_instance::instance::IcmProgramInstance;
+use solana_sdk::signature::{
+    Signer,
+    read_keypair_file,
+};
 
 const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6";
 
@@ -216,7 +221,6 @@ impl ExecutorHandle {
     /// Execute the swap transaction
     async fn execute_swap(&self, plan: &TradingPlan) -> Result<UnsignedTransactionResponse, AgentError> {
         // Load keypair (replace with your actual keypair management logic)
-        use solana_sdk::signature::read_keypair_file;
         let keypair = read_keypair_file("/path/to/your/keypair.json")
             .map_err(|e| AgentError::Configuration(format!("Failed to load keypair: {}", e)))?;
 
@@ -225,8 +229,7 @@ impl ExecutorHandle {
 
         // Build swap request for our ICM program
         let swap_request = SwapTokensRequest {
-            creator_pubkey: plan.bucket_pubkey.to_string(), // Creator should be derived properly
-            bucket_pubkey: plan.bucket_pubkey.to_string(),
+            bucket: plan.bucket_pubkey.to_string(),
             input_mint: plan.input_mint.to_string(),
             output_mint: plan.output_mint.to_string(),
             route_plan: plan.route_plan.clone(),

@@ -68,7 +68,8 @@ pub async fn start() {
         .route("/api/v1/bucket/swap", post(crate::routes::icm::swap_tokens))
         .route("/api/v1/bucket/claim-rewards", post(crate::routes::icm::claim_rewards))
         .route("/api/v1/bucket/close", post(crate::routes::icm::close_bucket))
-        .route("/api/v1/bucket/all", get(crate::routes::icm::get_all_pools))
+        .route("/api/v1/bucket/all", get(crate::routes::icm::get_all_pools_by_pda))
+        .route("/api/v1/bucket/trading_pools", post(crate::routes::icm::get_trading_pool_info))
         .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token));
 
     use tower::ServiceBuilder;

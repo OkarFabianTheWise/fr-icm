@@ -5,7 +5,7 @@
 
 pub mod agent_executor;
 pub mod portfolio_tracker;
-pub mod swap_engine;
+// pub mod swap_engine;
 
-// Re-exports for easier access
-pub use swap_engine::{initiate_buy_swap, SolanaSwapService};
+// // Re-exports for easier access
+// pub use swap_engine::{initiate_buy_swap, SolanaSwapService};

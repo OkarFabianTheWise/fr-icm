@@ -34,8 +34,8 @@ pub struct LoginRequest {
 
 #[derive(Serialize)]
 pub struct Tokens {
-    pub accessToken: String,
-    pub expiresAt: i64,
+    pub access_token: String,
+    pub expires_at: i64,
 }
 
 #[derive(Serialize)]
@@ -105,8 +105,15 @@ pub async fn me(
         // fill other fields as needed
     };
 
-    // Fetch all pools (buckets) for the frontend using internal fetch method
-    let all_pools = match app_state.icm_client.fetch_all_pools().await {
+    // Fetch user's keypair for pool queries
+    let keypair = match crate::routes::icm::get_user_keypair_by_email(&user.email, &app_state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("Failed to get user keypair: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, AxumJson(serde_json::json!({"error": "Failed to get user keypair"})));
+        }
+    };
+    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair).await {
         Ok(pools) => pools,
         Err(e) => {
             tracing::error!("Failed to fetch all pools: {}", e);
@@ -158,8 +165,8 @@ pub async fn register(
     let privkey_bytes: Vec<i32> = keypair.to_bytes().iter().map(|b| *b as i32).collect();
     let user_id = Uuid::new_v4();
     client.execute(
-        "INSERT INTO user_profiles (user_pubkey, private_key, email, password_hash) VALUES ($1, $2, $3, $4)",
-        &[&pubkey_str, &privkey_bytes, &email, &password_hash],
+        "INSERT INTO user_profiles (user_id,user_pubkey, private_key, email, password_hash) VALUES ($1, $2, $3, $4, $5)",
+        &[&user_id, &pubkey_str, &privkey_bytes, &email, &password_hash],
     ).await.map_err(|e| {
         tracing::error!("Failed to insert user profile: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
@@ -197,7 +204,7 @@ pub async fn register(
     let body = json!({
         "user": user,
         "wallet_address": pubkey_str,
-        "expiresAt": expires_at
+        "expires_at": expires_at
     });
     let response = Response::builder()
         .status(StatusCode::OK)
@@ -219,7 +226,7 @@ pub async fn login(
 
     // Fetch user by email
     let row = client.query_opt(
-        "SELECT user_pubkey, password_hash FROM user_profiles WHERE email = $1",
+        "SELECT user_pubkey, password_hash, user_id FROM user_profiles WHERE email = $1",
         &[&email],
     ).await.map_err(|e| {
         tracing::error!("Failed to query user profile: {}", e);
@@ -228,11 +235,20 @@ pub async fn login(
 
     let row = match row {
         Some(row) => row,
-        None => return Err(StatusCode::UNAUTHORIZED),
+        None => {
+            let body = serde_json::json!({"error": "User not found"});
+            let response = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(serde_json::to_string(&body).unwrap())
+                .unwrap();
+            return Ok(response);
+        }
     };
 
     let password_hash: String = row.try_get("password_hash").unwrap_or_default();
     let wallet_address: String = row.try_get("user_pubkey").unwrap_or_default();
+    let user_id = row.try_get::<_, Uuid>("user_id").unwrap_or_else(|_| Uuid::new_v4());
 
     // Verify password using Argon2 v3+ API
     let parsed_hash = PasswordHash::new(&password_hash)
@@ -241,8 +257,7 @@ pub async fn login(
     if argon2.verify_password(password.as_bytes(), &parsed_hash).is_err() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-
-    let user_id = Uuid::new_v4(); // In production, fetch the real user_id
+    
     let user = AuthUser {
         id: user_id,
         email: email.clone(),
@@ -255,8 +270,15 @@ pub async fn login(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let expires_at = claims.exp;
 
-    // Fetch all pools (buckets) for the frontend using internal fetch method
-    let all_pools = match app_state.icm_client.fetch_all_pools().await {
+    // Fetch user's keypair for pool queries
+    let keypair = match crate::routes::icm::get_user_keypair_by_email(&user.email, &app_state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("Failed to get user keypair: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair).await {
         Ok(pools) => pools,
         Err(e) => {
             tracing::error!("Failed to fetch all pools: {}", e);
@@ -283,7 +305,7 @@ pub async fn login(
     let body = json!({
         "user": user,
         "wallet_address": wallet_address,
-        "expiresAt": expires_at,
+        "expires_at": expires_at,
         "pools": all_pools
     });
     let response = Response::builder()

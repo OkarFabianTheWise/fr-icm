@@ -49,6 +49,7 @@ mod services;
 mod onchain_instance;
 mod agent;
 mod config;
+mod state_structs;
 
 use tracing_subscriber::{ layer::SubscriberExt, util::SubscriberInitExt };
 
