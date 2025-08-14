@@ -15,7 +15,7 @@ use crate::agent::ai_client::AIClient;
 /// The planner evaluates market data and generates trading plans
 pub struct Planner {
     strategies: HashMap<StrategyType, Box<dyn Strategy>>,
-    ai_client: Arc<AIClient>,
+    ai_client: AIClient,
     plan_queue: mpsc::UnboundedSender<TradingPlan>,
     market_conditions: Arc<RwLock<MarketConditions>>,
     current_positions: Arc<RwLock<HashMap<String, Position>>>,
@@ -26,7 +26,7 @@ pub struct Planner {
 
 impl Planner {
     pub fn new(
-        ai_client: Arc<AIClient>,
+    ai_client: AIClient,
         strategy_configs: Vec<StrategyConfig>,
         evaluation_interval_ms: u64,
     ) -> (Self, mpsc::UnboundedReceiver<TradingPlan>) {
@@ -179,7 +179,7 @@ impl Planner {
             question: "Analyze current market conditions and suggest optimal trading strategies".to_string(),
         };
 
-        match self.ai_client.analyze_trading_opportunity(ai_request).await {
+    match self.ai_client.analyze_trading_opportunity(ai_request).await {
             Ok(ai_response) => {
                 info!("AI analysis: {} (confidence: {})", 
                       ai_response.reasoning, ai_response.confidence);

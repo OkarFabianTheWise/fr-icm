@@ -1,5 +1,5 @@
 {
-  "address": "5sGq9V7fKHbG33NxTsqiNn5VLcbvP2MvMCq4wwc8EwKa",
+  "address": "BXwnU4VFAoQ3ES4SXZnXdMGsDufRrWwyrmXUNLhCH9JT",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -145,10 +145,6 @@
       ],
       "args": [
         {
-          "name": "bucket_name",
-          "type": "string"
-        },
-        {
           "name": "token_mint",
           "type": "pubkey"
         }
@@ -265,12 +261,7 @@
           "signer": true
         }
       ],
-      "args": [
-        {
-          "name": "bucket_name",
-          "type": "string"
-        }
-      ]
+      "args": []
     },
     {
       "name": "contribute_to_bucket",
@@ -474,10 +465,6 @@
         }
       ],
       "args": [
-        {
-          "name": "bucket_name",
-          "type": "string"
-        },
         {
           "name": "token_mint",
           "type": "pubkey"
@@ -849,12 +836,7 @@
           "signer": true
         }
       ],
-      "args": [
-        {
-          "name": "bucket_name",
-          "type": "string"
-        }
-      ]
+      "args": []
     },
     {
       "name": "swap_tokens",
@@ -909,7 +891,32 @@
         },
         {
           "name": "bucket",
-          "writable": true
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  98,
+                  117,
+                  99,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
+              },
+              {
+                "kind": "account",
+                "path": "bucket.creator",
+                "account": "Bucket"
+              }
+            ]
+          }
         },
         {
           "name": "input_mint"
@@ -1281,10 +1288,6 @@
                 "name": "BucketStatus"
               }
             }
-          },
-          {
-            "name": "total_contributions",
-            "type": "u64"
           },
           {
             "name": "trading_started_at",

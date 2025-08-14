@@ -1,3 +1,5 @@
+// Add this constant for vault seed if not already present
+pub const VAULT_SEED: &[u8] = b"vault";
 use anchor_client::{Client, Cluster};
 use anchor_lang::prelude::*;
 use std::sync::Arc;
@@ -16,7 +18,7 @@ use spl_associated_token_account::get_associated_token_address;
 declare_program!(icm_program);
 pub const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
 
-use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, SwapTokens, ClaimRewards, CloseBucket, CreateProfile};
+use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, ClaimRewards, CloseBucket};
 use icm_program::client::accounts::{CreateBucket as CreateBucketAccount, ContributeToBucket as ContributeToBucketAccount, StartTrading as StartTradingAccount, SwapTokens as SwapTokensAccount, ClaimRewards as ClaimRewardsAccount, CloseBucket as CloseBucketAccount, CreateProfile as CreateProfileAccount};
 pub use crate::state_structs::{TradingPool, CreatorProfile, BucketAccount, BucketInfo};
 use crate::state_structs::{CreateBucketRequest, ContributeToBucketRequest, StartTradingRequest, SwapTokensRequest, ClaimRewardsRequest, CloseBucketRequest, UnsignedTransactionResponse, GetCreatorProfileQuery, GetBucketQuery};
@@ -29,14 +31,180 @@ pub struct IcmProgramInstance {
 }
 
 impl IcmProgramInstance {
-    /// Swap tokens transaction for frontend signing
-    pub async fn swap_tokens_transaction(
+    /// Agent swap tokens transaction
+    pub async fn agent_swap_tokens_transaction(
         &self,
-        _request: SwapTokensRequest,
-        _keypair: Keypair
+        request: SwapTokensRequest,
+        keypair: Keypair,
+        bucket_name: &str,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        jupiter_program: Pubkey,
+        token_2022_program: Pubkey,
+        platform_fee_account: Pubkey,
+        input_mint_program: Pubkey,
+        output_mint_program: Pubkey,
     ) -> Result<UnsignedTransactionResponse> {
-        Err(anyhow!("Swap functionality is currently disabled"))
+        let cluster = self.cluster.clone();
+        let keypair_for_client = keypair.insecure_clone();
+        let keypair_for_sign = keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        let creator = keypair.pubkey();
+
+        // Derive bucket PDA
+        let (bucket_pda, _) = Pubkey::find_program_address(
+            &[b"bucket", bucket_name.as_bytes(), creator.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive trade_record PDA
+        let (trade_record_pda, _) = Pubkey::find_program_address(
+            &[b"trade_record", bucket_pda.as_ref(), creator.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive vault input token account PDA
+        let (vault_input_token_account, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, bucket_pda.as_ref(), input_mint.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive vault output token account PDA
+        let (vault_output_token_account, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, bucket_pda.as_ref(), output_mint.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        let ixs = program
+            .request()
+            .accounts(SwapTokensAccount {
+                trade_record: trade_record_pda,
+                creator,
+                bucket: bucket_pda,
+                input_mint,
+                system_program: system_program::id(),
+                input_mint_program,
+                output_mint,
+                output_mint_program,
+                vault_input_token_account,
+                vault_output_token_account,
+                jupiter_program,
+                token_2022_program,
+                platform_fee_account,
+            })
+            .args(icm_program::client::args::SwapTokens {
+                route_plan: request.route_plan.clone(),
+                in_amount: request.in_amount,
+                quoted_out_amount: request.quoted_out_amount,
+                slippage_bps: request.slippage_bps,
+                platform_fee_bps: request.platform_fee_bps,
+            })
+            .instructions()?;
+
+        let recent_blockhash = program.rpc().get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&creator),
+            &[&keypair_for_sign],
+            recent_blockhash,
+        );
+        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
+
+        Ok(UnsignedTransactionResponse {
+            transaction: sig.to_string(),
+            message: format!("Agent swap tokens for '{}'", creator.to_string()),
+        })
     }
+
+    /// Swap tokens transaction for frontend signing
+    pub async fn manual_swap_tokens_transaction(
+        &self,
+        request: SwapTokensRequest,
+        keypair: Keypair,
+        bucket_name: &str,
+        input_mint: Pubkey,
+        output_mint: Pubkey,
+        jupiter_program: Pubkey,
+        token_2022_program: Pubkey,
+        platform_fee_account: Pubkey,
+        input_mint_program: Pubkey,
+        output_mint_program: Pubkey,
+    ) -> Result<UnsignedTransactionResponse> {
+        let cluster = self.cluster.clone();
+        let keypair_for_client = keypair.insecure_clone();
+        let keypair_for_sign = keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        let creator = keypair.pubkey();
+
+        // Derive bucket PDA
+        let (bucket_pda, _) = Pubkey::find_program_address(
+            &[b"bucket", bucket_name.as_bytes(), creator.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive trade_record PDA
+        let (trade_record_pda, _) = Pubkey::find_program_address(
+            &[b"trade_record", bucket_pda.as_ref(), creator.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive vault input token account PDA
+        let (vault_input_token_account, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, bucket_pda.as_ref(), input_mint.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive vault output token account PDA
+        let (vault_output_token_account, _) = Pubkey::find_program_address(
+            &[VAULT_SEED, bucket_pda.as_ref(), output_mint.as_ref()],
+            &ICM_PROGRAM_ID,
+        );
+
+        let ixs = program
+            .request()
+            .accounts(SwapTokensAccount {
+                trade_record: trade_record_pda,
+                creator,
+                bucket: bucket_pda,
+                input_mint,
+                system_program: system_program::id(),
+                input_mint_program,
+                output_mint,
+                output_mint_program,
+                vault_input_token_account,
+                vault_output_token_account,
+                jupiter_program,
+                token_2022_program,
+                platform_fee_account,
+            })
+            .args(icm_program::client::args::SwapTokens {
+                route_plan: request.route_plan.clone(),
+                in_amount: request.in_amount,
+                quoted_out_amount: request.quoted_out_amount,
+                slippage_bps: request.slippage_bps,
+                platform_fee_bps: request.platform_fee_bps,
+            })
+            .instructions()?;
+
+        let recent_blockhash = program.rpc().get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&creator),
+            &[&keypair_for_sign],
+            recent_blockhash,
+        );
+        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
+
+        Ok(UnsignedTransactionResponse {
+            transaction: sig.to_string(),
+            message: format!("Swap tokens for '{}'", creator.to_string()),
+        })
+    }
+
     /// Create a new instance of the ICM program client
     pub fn new(cluster: Cluster, payer: Keypair) -> Result<Self> {
         Ok(Self {
@@ -103,7 +271,7 @@ impl IcmProgramInstance {
         // Derive PDAs for bucket, trading_pool, creator_profile
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
-        let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);
+        // let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);
         let usdc_mint = Pubkey::from_str("7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF")?;
         // Derive contributor token account (ATA)
         let vault_token_account = get_associated_token_address(&bucket_pda, &usdc_mint);
@@ -206,7 +374,6 @@ impl IcmProgramInstance {
                 system_program: system_program::id(),
             })
             .args(ContributeToBucket {
-                bucket_name: request.bucket_name.clone(),
                 token_mint,
                 amount: request.amount,
             })
@@ -261,7 +428,6 @@ impl IcmProgramInstance {
             .request()
             .accounts(accounts)
             .args(ClaimRewards {
-                bucket_name: request.bucket_name.clone(),
                 token_mint,
             })
             .instructions()?;
@@ -307,9 +473,7 @@ impl IcmProgramInstance {
         let ixs = program
             .request()
             .accounts(accounts)
-            .args(CloseBucket {
-                bucket_name: request.bucket_name.clone(),
-            })
+            .args(CloseBucket {})
             .instructions()?;
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
@@ -410,7 +574,6 @@ impl IcmProgramInstance {
                     trading_deadline: anchor_bucket.trading_deadline.to_string(),
                     creator_fee_percent: anchor_bucket.creator_fee_percent,
                     status: format!("{:?}", anchor_bucket.status),
-                    total_contributions: anchor_bucket.total_contributions.to_string(),
                     trading_started_at: anchor_bucket.trading_started_at.to_string(),
                     closed_at: anchor_bucket.closed_at.to_string(),
                     bump: anchor_bucket.bump,
@@ -440,22 +603,20 @@ impl IcmProgramInstance {
         let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
         let program = client.program(ICM_PROGRAM_ID)?;
 
-        let creator = keypair.pubkey();
+        let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.bucket_name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
 
         let accounts = vec![
-            AccountMeta::new(bucket_pda, true),
-            AccountMeta::new(trading_pool_pda, true),
+            AccountMeta::new(bucket_pda, false),
+            AccountMeta::new(trading_pool_pda, false),
             AccountMeta::new(creator, true),
         ];
 
         let ixs = program
             .request()
             .accounts(accounts)
-            .args(StartTrading {
-                bucket_name: request.bucket_name.clone(),
-            })
+            .args(StartTrading {})
             .instructions()?;
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
@@ -465,6 +626,7 @@ impl IcmProgramInstance {
             recent_blockhash,
         );
         let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
+        tracing::info!("Start trading transaction confirmed: {}", sig);
 
         Ok(UnsignedTransactionResponse {
             transaction: sig.to_string(),

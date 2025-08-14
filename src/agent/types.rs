@@ -209,6 +209,10 @@ pub enum TradingRecommendation {
 /// Error types for the agent system
 #[derive(thiserror::Error, Debug)]
 pub enum AgentError {
+    #[error("No valid trading plan found: {0}")]
+    NoOpportunity(String),
+    #[error("Database error: {0}")]
+    Database(String),
     #[error("Jupiter API error: {0}")]
     JupiterApi(String),
     

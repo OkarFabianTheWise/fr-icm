@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use axum::{
-    extract::{Path, State, Json},
+    extract::{State, Json},
     http::StatusCode,
     response::Json as ResponseJson,
     Router, routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
-use tokio::sync::RwLock;
+use tracing::{info, warn};
+// use tokio::sync::RwLock;
 
 use crate::agent::{
     TradingAgent, AgentState, StrategyConfig, 
@@ -33,6 +33,7 @@ pub struct StartAgentRequest {
     pub strategies: Vec<StrategyConfigRequest>,
     pub data_fetch_interval_ms: Option<u64>,
     pub learning_enabled: Option<bool>,
+    pub portfolio_id: uuid::Uuid,
 }
 
 /// Strategy configuration request format
@@ -112,21 +113,20 @@ pub async fn start_agent(
     let mut config_builder = TradingAgentConfigBuilder::new()
         .with_openai_api_key(request.openai_api_key)
         .with_token_pairs(request.token_pairs)
-        .with_strategy_configs(strategy_configs);
+        .with_strategy_configs(strategy_configs)
+        .with_portfolio_id(request.portfolio_id);
 
     if let Some(interval) = request.data_fetch_interval_ms {
         config_builder = config_builder.with_data_fetch_interval(interval);
     }
 
-    if let Some(learning) = request.learning_enabled {
-        config_builder = config_builder.with_learning_enabled(learning);
-    }
+    // learning_enabled is no longer supported in TradingAgentConfigBuilder
 
     let config = config_builder.build()
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid configuration: {}", e)))?;
 
     // Create new trading agent
-    let new_agent = TradingAgent::new(config, Arc::clone(&state.icm_client)).await
+    let new_agent = TradingAgent::new(config, Arc::clone(&state.icm_client), state.db.pool().clone()).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create agent: {}", e)))?;
 
     // Start the agent (this would need to be run in a background task)

@@ -5,20 +5,15 @@ use axum_extra::extract::cookie::{CookieJar, Cookie, SameSite};
 use axum::response::{Json as AxumJson, IntoResponse, Response};
 use axum::http::{header, StatusCode};
 use serde_json::{Value, json};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use argon2::{Argon2, password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString}};
 use argon2::password_hash::rand_core::OsRng;
 use solana_sdk::signature::Keypair;
 use solana_sdk::signature::Signer;
-use tokio_postgres::types::ToSql;
-use deadpool_postgres::Pool;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use crate::auth::{jwt::JwtService, models::AuthUser};
+use crate::auth::{models::AuthUser};
 use uuid::Uuid;
 use crate::server::AppState;
-use crate::database::connection::DatabaseConfig;
-use chrono::Duration as ChronoDuration;
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {

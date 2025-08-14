@@ -41,8 +41,7 @@ pub struct BucketAccount {
     pub contribution_deadline: String, // Use String for BN compatibility
     pub trading_deadline: String,
     pub creator_fee_percent: u16,
-    pub status: String, // You may want to use a struct/enum for richer info
-    pub total_contributions: String,
+    pub status: String,
     pub trading_started_at: String,
     pub closed_at: String,
     pub bump: u8,
@@ -89,6 +88,7 @@ pub struct ContributeToBucketRequest {
 #[derive(Deserialize)]
 pub struct StartTradingRequest {
     pub bucket_name: String,
+    pub creator_pubkey: String, // base58 pubkey
 }
 
 #[derive(Deserialize)]

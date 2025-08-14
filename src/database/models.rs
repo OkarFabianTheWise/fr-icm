@@ -1,20 +1,33 @@
+
 //! Database Models
 //!
 //! Tokio-postgres compatible models for all database entities in the ICM system.
 //! Includes trading agent data persistence for analytics and learning.
 
 use bigdecimal::BigDecimal;
+/// Helper to convert rust_decimal::Decimal to bigdecimal::BigDecimal
+fn decimal_to_bigdecimal(decimal: Decimal) -> BigDecimal {
+    BigDecimal::from_str(&decimal.to_string()).unwrap()
+}
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use tokio_postgres::Row;
 use uuid::Uuid;
 use rust_decimal::Decimal;
-
-/// Helper function to convert rust_decimal::Decimal to bigdecimal::BigDecimal
-fn decimal_to_bigdecimal(decimal: Decimal) -> BigDecimal {
-    BigDecimal::from_str(&decimal.to_string()).unwrap_or_default()
+use deadpool_postgres::Pool;
+use anyhow::Result;
+impl PortfolioAsset {
+    /// Fetch all token mints (asset_symbol) for a given portfolio_id
+    pub async fn fetch_token_mints_by_portfolio(pool: &Pool, portfolio_id: Uuid) -> Result<Vec<String>> {
+        let client = pool.get().await?;
+        let rows = client
+            .query("SELECT asset_symbol FROM portfolio_assets WHERE portfolio_id = $1", &[&portfolio_id])
+            .await?;
+        Ok(rows.into_iter().filter_map(|row| row.try_get("asset_symbol").ok()).collect())
+    }
 }
+
 
 /// Trait for converting from tokio-postgres Row
 pub trait FromRow {
@@ -123,10 +136,10 @@ pub struct Swap {
     pub portfolio_id: Option<Uuid>,
     pub from_currency: String,
     pub to_currency: String,
-    pub from_amount: BigDecimal,
-    pub to_amount: BigDecimal,
-    pub exchange_rate: BigDecimal,
-    pub fee_amount: BigDecimal,
+    pub from_amount: Decimal,
+    pub to_amount: Decimal,
+    pub exchange_rate: Decimal,
+    pub fee_amount: Decimal,
     pub fee_currency: String,
     pub status: String, // "PENDING", "COMPLETED", "FAILED"
     pub transaction_hash: Option<String>,
@@ -142,10 +155,10 @@ impl FromRow for Swap {
             portfolio_id: row.try_get("portfolio_id")?,
             from_currency: row.try_get("from_currency")?,
             to_currency: row.try_get("to_currency")?,
-            from_amount: decimal_to_bigdecimal(row.try_get::<_, Decimal>("from_amount")?),
-            to_amount: decimal_to_bigdecimal(row.try_get::<_, Decimal>("to_amount")?),
-            exchange_rate: decimal_to_bigdecimal(row.try_get::<_, Decimal>("exchange_rate")?),
-            fee_amount: decimal_to_bigdecimal(row.try_get::<_, Decimal>("fee_amount")?),
+            from_amount: row.try_get::<_, Decimal>("from_amount")?,
+            to_amount: row.try_get::<_, Decimal>("to_amount")?,
+            exchange_rate: row.try_get::<_, Decimal>("exchange_rate")?,
+            fee_amount: row.try_get::<_, Decimal>("fee_amount")?,
             fee_currency: row.try_get("fee_currency")?,
             status: row.try_get("status")?,
             transaction_hash: row.try_get("transaction_hash")?,

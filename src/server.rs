@@ -3,7 +3,7 @@
 //! HTTP server setup and route configuration for the ICM server.
 
 use axum::{Router, routing::{get, post}};
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::{CorsLayer};
 use tokio::net::TcpListener;
 use std::sync::Arc;
 use anchor_client::Cluster;
@@ -11,7 +11,6 @@ use solana_sdk::signature::Keypair;
 use tokio::sync::RwLock;
 
 use crate::routes::health::ping;
-use crate::routes::icm;
 use crate::routes::agent;
 use crate::onchain_instance::instance::IcmProgramInstance;
 use crate::agent::TradingAgent;

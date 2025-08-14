@@ -1,23 +1,19 @@
 use axum::{Json, extract::{State, Extension}, response::IntoResponse};
-use serde::{Deserialize, Serialize};
+use serde::{Serialize};
 use crate::server::AppState;
 use anchor_client::solana_sdk::signature::Keypair;
-use anchor_client::Client;
-use anchor_client::Cluster;
 use solana_sdk::pubkey::Pubkey;
-use std::sync::Arc;
-use tracing::error;
 use solana_sdk::signature::Signer;
 use axum::extract::Query;
-use axum::http::StatusCode;
 use axum::response::Json as ResponseJson;
 use anyhow::Result;
 use anchor_lang::declare_program;
 
 use crate::state_structs::{CreateBucketRequest,
-UnsignedTransactionResponse, GetBucketQuery, BucketInfo, BucketAccount, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ContributeToBucketRequest, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
+UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ContributeToBucketRequest, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
 
 use std::convert::TryFrom;
+use std::str::FromStr;
 
 declare_program!(icm_program);
 const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
@@ -386,6 +382,7 @@ pub async fn start_trading(
     // Convert to instance::StartTradingRequest
     let instance_request = StartTradingRequest {
         bucket_name: request.bucket_name.clone(),
+        creator_pubkey: request.creator_pubkey.clone()
     };
     match state.icm_client.start_trading_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
@@ -415,19 +412,177 @@ pub async fn swap_tokens(
     };
     // Convert to instance::SwapTokensRequest
     let instance_request = SwapTokensRequest {
-        bucket: request.bucket,
-        input_mint: request.input_mint,
-        output_mint: request.output_mint,
+        bucket: request.bucket.clone(),
+        input_mint: request.input_mint.clone(),
+        output_mint: request.output_mint.clone(),
         in_amount: request.in_amount,
         quoted_out_amount: request.quoted_out_amount,
         slippage_bps: request.slippage_bps,
         platform_fee_bps: request.platform_fee_bps,
-        route_plan: request.route_plan,
+        route_plan: request.route_plan.clone(),
     };
-    match state.icm_client.swap_tokens_transaction(instance_request, keypair).await {
+    // You may need to parse/lookup these pubkeys as needed for your deployment
+    let bucket_name = &request.bucket;
+    let input_mint = Pubkey::from_str(&request.input_mint).unwrap();
+    let output_mint = Pubkey::from_str(&request.output_mint).unwrap();
+
+    // Fetch input_mint_program and output_mint_program from the database using the input/output mint addresses
+    let pool = state.db.pool();
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("[swap_tokens] DB connection error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    // Query for mint program addresses
+    let row = match client.query_opt(
+        "SELECT input_mint_program, output_mint_program FROM token_mint_programs WHERE input_mint = $1 AND output_mint = $2",
+        &[&request.input_mint, &request.output_mint],
+    ).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("[swap_tokens] DB query error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB query error".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    let (input_mint_program, output_mint_program) = match row {
+        Some(row) => {
+            let inp: String = row.try_get("input_mint_program").unwrap_or_default();
+            let outp: String = row.try_get("output_mint_program").unwrap_or_default();
+            (
+                Pubkey::from_str(&inp).expect("Invalid input_mint_program from DB"),
+                Pubkey::from_str(&outp).expect("Invalid output_mint_program from DB"),
+            )
+        },
+        None => {
+            tracing::error!("[swap_tokens] No mint program mapping found in DB");
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("No mint program mapping found in DB".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+
+    let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
+    let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
+    // For token_2022_program, use the constant from spl_token
+    use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
+    let token_2022_program = TOKEN_2022_PROGRAM_ID;
+
+    match state.icm_client.agent_swap_tokens_transaction(
+        instance_request,
+        keypair,
+        bucket_name,
+        input_mint,
+        output_mint,
+        jupiter_program,
+        token_2022_program,
+        platform_fee_account,
+        input_mint_program,
+        output_mint_program,
+    ).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
-            tracing::error!("[swap_tokens] Swap tokens error: {}", e);
+            tracing::error!("[swap_tokens] Agent swap tokens error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
+            ResponseJson(error_response)
+        }
+    }
+}
+
+/// Agent swap tokens endpoint
+#[axum::debug_handler]
+pub async fn agent_swap_tokens(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>,
+    Json(request): Json<SwapTokensRequest>
+) -> impl IntoResponse {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(kp) => kp,
+        Err(e) => {
+            tracing::error!("[agent_swap_tokens] Failed to get user keypair: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    // Convert to instance::SwapTokensRequest
+    let instance_request = SwapTokensRequest {
+        bucket: request.bucket.clone(),
+        input_mint: request.input_mint.clone(),
+        output_mint: request.output_mint.clone(),
+        in_amount: request.in_amount,
+        quoted_out_amount: request.quoted_out_amount,
+        slippage_bps: request.slippage_bps,
+        platform_fee_bps: request.platform_fee_bps,
+        route_plan: request.route_plan.clone(),
+    };
+    // You may need to parse/lookup these pubkeys as needed for your deployment
+    let bucket_name = &request.bucket;
+    let input_mint = Pubkey::from_str(&request.input_mint).unwrap();
+    let output_mint = Pubkey::from_str(&request.output_mint).unwrap();
+
+    // Fetch input_mint_program and output_mint_program from the database using the input/output mint addresses
+    let pool = state.db.pool();
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("[agent_swap_tokens] DB connection error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    // Query for mint program addresses
+    let row = match client.query_opt(
+        "SELECT input_mint_program, output_mint_program FROM token_mint_programs WHERE input_mint = $1 AND output_mint = $2",
+        &[&request.input_mint, &request.output_mint],
+    ).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("[agent_swap_tokens] DB query error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB query error".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    let (input_mint_program, output_mint_program) = match row {
+        Some(row) => {
+            let inp: String = row.try_get("input_mint_program").unwrap_or_default();
+            let outp: String = row.try_get("output_mint_program").unwrap_or_default();
+            (
+                Pubkey::from_str(&inp).expect("Invalid input_mint_program from DB"),
+                Pubkey::from_str(&outp).expect("Invalid output_mint_program from DB"),
+            )
+        },
+        None => {
+            tracing::error!("[agent_swap_tokens] No mint program mapping found in DB");
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("No mint program mapping found in DB".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+
+    
+    let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
+    let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
+    // For token_2022_program, use the constant from spl_token
+    use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
+    let token_2022_program = TOKEN_2022_PROGRAM_ID;
+
+    match state.icm_client.agent_swap_tokens_transaction(
+        instance_request,
+        keypair,
+        bucket_name,
+        input_mint,
+        output_mint,
+        jupiter_program,
+        token_2022_program,
+        platform_fee_account,
+        input_mint_program,
+        output_mint_program,
+    ).await {
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
+        Err(e) => {
+            tracing::error!("[agent_swap_tokens] Agent swap tokens error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             ResponseJson(error_response)
         }

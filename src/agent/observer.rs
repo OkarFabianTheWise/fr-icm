@@ -2,58 +2,57 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::{interval, Instant};
-use tracing::{info, warn, error, debug};
+use tokio::time::interval;
+use tracing::{info, warn, debug, error};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-
+use serde::Deserialize;
 use crate::agent::types::{
-    Position, PerformanceMetrics, AgentError, MarketConditions,
-    TradingPlan, StrategyType,
+    Position, PerformanceMetrics, AgentError, StrategyType,
 };
-use crate::agent::executor::{ExecutionResult, TransactionStatus};
+use crate::agent::executor::ExecutionResult;
+use crate::database::models::{Portfolio, PortfolioAsset};
+// Jupiter price API endpoint
+const JUPITER_PRICE_API: &str = "https://price.jup.ag/v4/price";
+
+#[derive(Debug, Deserialize)]
+struct JupiterPriceResponse {
+    data: HashMap<String, JupiterTokenPrice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JupiterTokenPrice {
+    price: f64,
+}
 
 /// Observer monitors execution results and provides feedback for learning
+#[derive(Debug)]
 pub struct Observer {
     execution_receiver: Option<mpsc::UnboundedReceiver<ExecutionResult>>,
     performance_metrics: Arc<RwLock<PerformanceMetrics>>,
     active_positions: Arc<DashMap<String, Position>>,
     execution_history: Arc<RwLock<Vec<ExecutionResult>>>,
-    strategy_performance: Arc<RwLock<HashMap<StrategyType, StrategyMetrics>>>,
     learning_feedback: mpsc::UnboundedSender<LearningFeedback>,
     position_updates: mpsc::UnboundedSender<HashMap<String, Position>>,
     is_active: Arc<RwLock<bool>>,
     monitoring_interval: Duration,
+    db_pool: deadpool_postgres::Pool,
+    data_fetcher: Arc<crate::agent::data_fetcher::DataFetcher>,
+    portfolio_id: uuid::Uuid,
 }
 
-#[derive(Debug, Clone)]
-pub struct StrategyMetrics {
-    pub total_trades: u64,
-    pub successful_trades: u64,
-    pub total_pnl: rust_decimal::Decimal,
-    pub win_rate: f64,
-    pub avg_execution_time_ms: u64,
-    pub avg_slippage_bps: f64,
-    pub max_drawdown: f64,
-    pub sharpe_ratio: f64,
-    pub last_trade: Option<DateTime<Utc>>,
-}
+
 
 #[derive(Debug, Clone)]
 pub struct LearningFeedback {
     pub strategy_type: StrategyType,
     pub execution_result: ExecutionResult,
-    pub position_change: Option<PositionChange>,
+    pub position_change: Option<()>,
     pub performance_impact: PerformanceImpact,
     pub suggested_adjustments: HashMap<String, f64>,
 }
 
-#[derive(Debug, Clone)]
-pub struct PositionChange {
-    pub before: Option<Position>,
-    pub after: Option<Position>,
-    pub pnl_change: f64,
-}
+
 
 #[derive(Debug, Clone)]
 pub struct PerformanceImpact {
@@ -72,8 +71,42 @@ pub enum ExecutionQuality {
 }
 
 impl Observer {
+
+
+    /// Fetch the list of tokens from the database for the configured portfolio
+    async fn fetch_monitored_tokens(&self) -> Vec<String> {
+        match PortfolioAsset::fetch_token_mints_by_portfolio(&self.db_pool, self.portfolio_id).await {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                error!("Failed to fetch token mints from DB: {}", e);
+                vec![]
+            }
+        }
+    }
+
+    /// Fetch prices for a list of tokens using the DataFetcher cache
+    async fn fetch_token_prices(&self, tokens: &[String]) -> HashMap<String, f64> {
+        let mut prices = HashMap::new();
+        for token in tokens {
+            if let Some(price) = self.data_fetcher.get_cached_price(token) {
+                prices.insert(token.clone(), price);
+            } else {
+                warn!("No cached price for token {}", token);
+            }
+        }
+        prices
+    }
+
+    pub async fn start_with_receiver(&mut self, execution_receiver: mpsc::UnboundedReceiver<ExecutionResult>) -> Result<(), AgentError> {
+        self.execution_receiver = Some(execution_receiver);
+        // You can add your monitoring loop logic here
+        Ok(())
+    }
     pub fn new(
         monitoring_interval_ms: u64,
+        db_pool: deadpool_postgres::Pool,
+        data_fetcher: Arc<crate::agent::data_fetcher::DataFetcher>,
+        portfolio_id: uuid::Uuid,
     ) -> (Self, mpsc::UnboundedReceiver<ExecutionResult>, mpsc::UnboundedReceiver<LearningFeedback>, mpsc::UnboundedReceiver<HashMap<String, Position>>) {
         let (exec_sender, exec_receiver) = mpsc::unbounded_channel();
         let (feedback_sender, feedback_receiver) = mpsc::unbounded_channel();
@@ -84,11 +117,13 @@ impl Observer {
             performance_metrics: Arc::new(RwLock::new(Self::default_performance_metrics())),
             active_positions: Arc::new(DashMap::new()),
             execution_history: Arc::new(RwLock::new(Vec::new())),
-            strategy_performance: Arc::new(RwLock::new(HashMap::new())),
             learning_feedback: feedback_sender,
             position_updates: position_sender,
             is_active: Arc::new(RwLock::new(false)),
             monitoring_interval: Duration::from_millis(monitoring_interval_ms),
+            db_pool,
+            data_fetcher,
+            portfolio_id,
         };
 
         (observer, exec_receiver, feedback_receiver, position_receiver)
@@ -373,16 +408,37 @@ impl Observer {
     async fn perform_periodic_monitoring(&self) {
         debug!("Performing periodic monitoring");
 
-        // Update position values based on current market prices
+        // 1. Fetch tokens from DB (simulate)
+        let tokens = self.fetch_monitored_tokens().await;
+        debug!("Monitoring tokens: {:?}", tokens);
+
+        // 2. Fetch prices from Jupiter
+        let prices = self.fetch_token_prices(&tokens).await;
+        debug!("Fetched prices: {:?}", prices);
+
+        // 3. Analyze with AI (stub: just log for now)
+        // TODO: Replace with real AI analysis
+        if !prices.is_empty() {
+            info!("[AI] Analyzing token prices: {:?}", prices);
+            // Example: If SOL price > 100, execute a trade (stub)
+            if let Some(sol_price) = prices.get("So11111111111111111111111111111111111111112") {
+                if *sol_price > 100.0 {
+                    info!("[AI] SOL price > 100, would execute trade");
+                    // TODO: Call execution logic here
+                }
+            }
+        }
+
+        // 4. Update position values based on current market prices
         self.update_position_values().await;
 
-        // Calculate and update performance metrics
+        // 5. Calculate and update performance metrics
         self.recalculate_performance_metrics().await;
 
-        // Clean up old data
+        // 6. Clean up old data
         self.cleanup_old_data().await;
 
-        // Generate periodic reports
+        // 7. Generate periodic reports
         self.generate_periodic_reports().await;
     }
 

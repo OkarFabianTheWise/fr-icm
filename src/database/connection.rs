@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
-use std::env;
+// use std::env;
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
@@ -98,12 +98,12 @@ impl DatabaseConnection {
             .context("Failed to create database pool")?;
 
         // Test the connection
-        let client = pool
+        let _client = pool
             .get()
             .await
             .context("Failed to get connection from pool")?;
         
-        client
+        _client
             .query("SELECT 1", &[])
             .await
             .context("Failed to test database connection")?;

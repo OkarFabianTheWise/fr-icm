@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, Semaphore};
@@ -7,18 +6,22 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use tracing::{info, warn, error, debug};
 use chrono::Utc;
-
+use anchor_lang::prelude::*;
 use crate::agent::types::{TradingPlan, AgentError, ExecutionSettings};
 use crate::state_structs::{SwapTokensRequest, UnsignedTransactionResponse};
 use crate::onchain_instance::instance::IcmProgramInstance;
 use solana_sdk::signature::{
-    Signer,
     read_keypair_file,
 };
+use std::str::FromStr;
+
+use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
+use std::result::Result as StdResult;
 
 const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6";
 
 /// Executes trading plans by building and submitting transactions
+#[derive(Debug)]
 pub struct Executor {
     icm_client: Arc<IcmProgramInstance>,
     http_client: Client,
@@ -52,6 +55,12 @@ pub struct ExecutionMetrics {
 }
 
 impl Executor {
+
+    pub async fn start_with_receiver(&mut self, plan_receiver: mpsc::UnboundedReceiver<TradingPlan>) -> StdResult<(), AgentError> {
+        self.plan_receiver = Some(plan_receiver);
+        // You can add your execution loop logic here
+        Ok(())
+    }
     pub fn new(
         icm_client: Arc<IcmProgramInstance>,
         max_concurrent_executions: usize,
@@ -80,7 +89,7 @@ impl Executor {
     }
 
     /// Start the execution loop
-    pub async fn start(&mut self) -> Result<(), AgentError> {
+    pub async fn start(&mut self) -> StdResult<(), AgentError> {
         {
             let mut is_active = self.is_active.write().await;
             if *is_active {
@@ -219,15 +228,12 @@ impl ExecutorHandle {
     }
 
     /// Execute the swap transaction
-    async fn execute_swap(&self, plan: &TradingPlan) -> Result<UnsignedTransactionResponse, AgentError> {
-        // Load keypair (replace with your actual keypair management logic)
+    async fn execute_swap(&self, plan: &TradingPlan) -> StdResult<UnsignedTransactionResponse, AgentError> {
+        // Directly call the agent_swap_tokens_transaction method from IcmProgramInstance
+        // You may need to load the keypair and other arguments as needed
         let keypair = read_keypair_file("/path/to/your/keypair.json")
             .map_err(|e| AgentError::Configuration(format!("Failed to load keypair: {}", e)))?;
 
-        // First, get fresh route instructions from Jupiter
-        let swap_instructions = self.get_jupiter_swap_instructions(plan).await?;
-
-        // Build swap request for our ICM program
         let swap_request = SwapTokensRequest {
             bucket: plan.bucket_pubkey.to_string(),
             input_mint: plan.input_mint.to_string(),
@@ -236,26 +242,47 @@ impl ExecutorHandle {
             in_amount: plan.input_amount,
             quoted_out_amount: plan.min_output_amount,
             slippage_bps: plan.max_slippage_bps,
-            platform_fee_bps: 0, // Could be configured
+            platform_fee_bps: 50, // Could be configured
         };
 
-        // Execute through ICM program
-        let tx_response = self.icm_client.swap_tokens_transaction(swap_request, keypair).await
-            .map_err(|e| AgentError::TransactionFailed(format!("ICM swap failed: {}", e)))?;
+        // Fetch bucket_name from the database using plan.bucket_pubkey
+        // This is a stub. Replace with actual DB fetch logic as needed.
+    let bucket_name = Self::fetch_bucket_name_by_pubkey(plan.bucket_pubkey)
+            .await
+            .map_err(|e| AgentError::Configuration(format!("Failed to fetch bucket name: {}", e)))?;
 
-        info!("Generated unsigned transaction for plan {}", plan.id);
-        
-        // In a real implementation, you would:
-        // 1. Send transaction to network
-        // 2. Monitor for confirmation
-        // 3. Handle retries if needed
-        // 4. Update with actual transaction signature
+        let input_mint = plan.input_mint;
+        let output_mint = plan.output_mint;
+        let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
+        let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
+        let token_2022_program = TOKEN_2022_PROGRAM_ID;
+        let input_mint_program = Pubkey::default();
+        let output_mint_program = token_2022_program;
+
+        let tx_response = self.icm_client.agent_swap_tokens_transaction(
+            swap_request,
+            keypair,
+            &bucket_name,
+            input_mint,
+            output_mint,
+            jupiter_program,
+            token_2022_program,
+            platform_fee_account,
+            input_mint_program,
+            output_mint_program,
+        ).await.map_err(|e| AgentError::TransactionFailed(format!("ICM swap failed: {}", e)))?;
 
         Ok(tx_response)
     }
 
+// Stub for fetching bucket_name from DB by pubkey
+pub async fn fetch_bucket_name_by_pubkey(_bucket_pubkey: Pubkey) -> StdResult<String, AgentError> {
+    // TODO: Implement actual DB lookup
+    Ok("bucket_name_from_db".to_string())
+}
+
     /// Get swap instructions from Jupiter API
-    async fn get_jupiter_swap_instructions(&self, plan: &TradingPlan) -> Result<Value, AgentError> {
+    async fn get_jupiter_swap_instructions(&self, plan: &TradingPlan) -> StdResult<Value, AgentError> {
         let swap_request = json!({
             "quoteResponse": {
                 "inputMint": plan.input_mint.to_string(),
@@ -271,29 +298,34 @@ impl ExecutorHandle {
             "prioritizationFeeLamports": plan.priority_fee,
         });
 
-        let response = timeout(
+        let response_result = timeout(
             Duration::from_millis(10000), // 10 second timeout
             self.http_client
                 .post(&format!("{}/swap-instructions", JUPITER_SWAP_API))
                 .json(&swap_request)
                 .send()
-        ).await
-        .map_err(|_| AgentError::TransactionFailed("Jupiter API timeout".to_string()))?
-        .map_err(|e| AgentError::Network(e))?;
+        ).await;
+
+        let response = match response_result {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Err(AgentError::Network(e)),
+            Err(_) => return Err(AgentError::TransactionFailed("Jupiter API timeout".to_string())),
+        };
 
         if !response.status().is_success() {
-            return Err(AgentError::JupiterApi(format!(
-                "Swap instructions failed: HTTP {}",
-                response.status()
-            )));
+            let err_msg = format!("Swap instructions failed: HTTP {}", response.status());
+            return Err(AgentError::JupiterApi(err_msg));
         }
 
-        let instructions: Value = response.json().await?;
+        let instructions: Value = match response.json().await {
+            Ok(val) => val,
+            Err(e) => return Err(AgentError::Network(e)),
+        };
         Ok(instructions)
     }
 
     /// Decode route plan from binary format
-    fn decode_route_plan(&self, encoded: &[u8]) -> Result<Value, AgentError> {
+    fn decode_route_plan(&self, encoded: &[u8]) -> StdResult<Value, AgentError> {
         // Decode the route plan that was encoded by the strategy
         let route_plan: Vec<crate::agent::types::RoutePlan> = bincode::deserialize(encoded)
             .map_err(|e| AgentError::Configuration(format!("Failed to decode route plan: {}", e)))?;

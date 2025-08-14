@@ -15,6 +15,7 @@ const JUPITER_QUOTE_API: &str = "https://quote-api.jup.ag/v6";
 const JUPITER_PRICE_API: &str = "https://api.jup.ag/price/v2";
 
 /// Data fetcher for continuous market data acquisition
+#[derive(Debug)]
 pub struct DataFetcher {
     client: Client,
     quote_cache: Arc<DashMap<String, QuoteData>>,
@@ -308,6 +309,12 @@ impl DataFetcher {
             .iter()
             .map(|entry| (entry.key().clone(), entry.value().clone()))
             .collect()
+    }
+
+    /// Get a new receiver for quotes (for consumers)
+    pub fn get_quote_receiver(&self) -> mpsc::UnboundedReceiver<QuoteData> {
+        let (_sender, receiver) = mpsc::unbounded_channel();
+        receiver
     }
 
     /// Check if data is fresh (within configured interval)

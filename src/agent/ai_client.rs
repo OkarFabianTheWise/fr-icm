@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tracing::{info, warn, error};
-use chrono::Utc;
-
 use crate::agent::types::{
     AIAnalysisRequest, AIAnalysisResponse, TradingRecommendation,
     QuoteData, Position, StrategyConfig, PerformanceMetrics,
@@ -19,6 +16,17 @@ pub struct AIClient {
 }
 
 impl AIClient {
+    /// Analyze a trading opportunity using AI (OpenAI API)
+    #[allow(dead_code)]
+    pub async fn analyze_trading_opportunity(
+        &self,
+        request: AIAnalysisRequest,
+    ) -> Result<AIAnalysisResponse, AgentError> {
+        let system_prompt = self.create_system_prompt();
+        let user_prompt = self.create_analysis_prompt(&request);
+        let response = self.call_openai_api(&system_prompt, &user_prompt).await?;
+        self.parse_ai_response(&response).await
+    }
     pub fn new(api_key: String) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -34,123 +42,7 @@ impl AIClient {
         }
     }
 
-    pub fn with_model(mut self, model: String) -> Self {
-        self.model = model;
-        self
-    }
-
-    pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = temperature;
-        self
-    }
-
-    /// Analyze market conditions and generate trading recommendations
-    pub async fn analyze_trading_opportunity(
-        &self,
-        request: AIAnalysisRequest,
-    ) -> Result<AIAnalysisResponse, AgentError> {
-        let system_prompt = self.create_system_prompt();
-        let user_prompt = self.create_analysis_prompt(&request);
-
-        let response = self.call_openai_api(&system_prompt, &user_prompt).await?;
-        
-        // Parse the structured response from AI
-        self.parse_ai_response(&response).await
-    }
-
-    /// Get market sentiment analysis
-    pub async fn get_market_sentiment(
-        &self,
-        market_data: &[QuoteData],
-        token_symbols: &HashMap<String, String>,
-    ) -> Result<MarketConditions, AgentError> {
-        let prompt = format!(
-            r#"Analyze the following market data and provide sentiment analysis:
-
-Market Data:
-{}
-
-Token Symbols:
-{}
-
-Provide analysis in the following JSON format:
-{{
-    "volatility_24h": <number>,
-    "volume_24h": <number>,
-    "price_trend": "Bullish|Bearish|Sideways",
-    "liquidity_score": <number 0-1>,
-    "analysis_summary": "<brief summary>"
-}}
-"#,
-            serde_json::to_string_pretty(market_data)
-                .map_err(|e| AgentError::Serialization(e))?,
-            serde_json::to_string_pretty(token_symbols)
-                .map_err(|e| AgentError::Serialization(e))?
-        );
-
-        let response = self.call_openai_api(
-            "You are a cryptocurrency market analyst. Analyze market data and provide sentiment.",
-            &prompt
-        ).await?;
-
-        self.parse_market_conditions(&response).await
-    }
-
-    /// Get risk assessment for a potential trade
-    pub async fn assess_trade_risk(
-        &self,
-        quote: &QuoteData,
-        current_position: Option<&Position>,
-        strategy: &StrategyConfig,
-        market_conditions: &MarketConditions,
-    ) -> Result<RiskAssessment, AgentError> {
-        let prompt = format!(
-            r#"Assess the risk for this potential trade:
-
-Quote Data:
-{}
-
-Current Position:
-{}
-
-Strategy Configuration:
-{}
-
-Market Conditions:
-{}
-
-Provide risk assessment in JSON format:
-{{
-    "risk_score": <number 0-1>,
-    "max_loss_estimate": <number>,
-    "position_risk_pct": <number>,
-    "market_risk_factors": ["factor1", "factor2", ...],
-    "recommendation": "PROCEED|CAUTION|ABORT",
-    "reasoning": "<detailed reasoning>"
-}}
-"#,
-            serde_json::to_string_pretty(quote)
-                .map_err(|e| AgentError::Serialization(e))?,
-            match current_position {
-                Some(pos) => serde_json::to_string_pretty(pos)
-                    .map_err(|e| AgentError::Serialization(e))?,
-                None => "No current position".to_string(),
-            },
-            serde_json::to_string_pretty(strategy)
-                .map_err(|e| AgentError::Serialization(e))?,
-            serde_json::to_string_pretty(market_conditions)
-                .map_err(|e| AgentError::Serialization(e))?
-        );
-
-        let response = self.call_openai_api(
-            "You are a risk management specialist for cryptocurrency trading. Assess trade risk carefully.",
-            &prompt
-        ).await?;
-
-        self.parse_risk_assessment(&response).await
-    }
-
-    /// Generate strategy optimization suggestions
+    #[allow(dead_code)]
     pub async fn optimize_strategy(
         &self,
         current_strategy: &StrategyConfig,
@@ -160,28 +52,28 @@ Provide risk assessment in JSON format:
         let prompt = format!(
             r#"Analyze the current trading strategy performance and suggest optimizations:
 
-Current Strategy:
-{}
+            Current Strategy:
+            {}
 
-Performance Metrics:
-{}
+            Performance Metrics:
+            {}
 
-Recent Trades:
-{}
+            Recent Trades:
+            {}
 
-Provide optimization suggestions in JSON format:
-{{
-    "suggested_parameters": {{
-        "min_spread_bps": <number>,
-        "max_slippage_bps": <number>,
-        "position_size_usd": <number>,
-        "rebalance_threshold_pct": <number>,
-        "priority_fee_percentile": <number>
-    }},
-    "reasoning": "<explanation of changes>",
-    "expected_improvement": "<expected performance improvement>"
-}}
-"#,
+            Provide optimization suggestions in JSON format:
+            {{
+                "suggested_parameters": {{
+                    "min_spread_bps": <number>,
+                    "max_slippage_bps": <number>,
+                    "position_size_usd": <number>,
+                    "rebalance_threshold_pct": <number>,
+                    "priority_fee_percentile": <number>
+                }},
+                "reasoning": "<explanation of changes>",
+                "expected_improvement": "<expected performance improvement>"
+            }}
+            "#,
             serde_json::to_string_pretty(current_strategy)
                 .map_err(|e| AgentError::Serialization(e))?,
             serde_json::to_string_pretty(performance)
@@ -199,6 +91,7 @@ Provide optimization suggestions in JSON format:
     }
 
     /// Create the system prompt for the AI
+    #[allow(dead_code)]
     fn create_system_prompt(&self) -> String {
         r#"You are an advanced cryptocurrency trading AI assistant with expertise in:
 - Solana blockchain and DeFi protocols
@@ -220,48 +113,49 @@ Be conservative with risk assessment and prioritize capital preservation."#.to_s
     }
 
     /// Create the analysis prompt for trading decisions
+    #[allow(dead_code)]
     fn create_analysis_prompt(&self, request: &AIAnalysisRequest) -> String {
         format!(
             r#"Analyze the following trading scenario and provide a recommendation:
 
-MARKET DATA:
-{}
+            MARKET DATA:
+            {}
 
-CURRENT POSITIONS:
-{}
+            CURRENT POSITIONS:
+            {}
 
-STRATEGY CONFIGURATION:
-{}
+            STRATEGY CONFIGURATION:
+            {}
 
-PERFORMANCE HISTORY:
-{}
+            PERFORMANCE HISTORY:
+            {}
 
-SPECIFIC QUESTION:
-{}
+            SPECIFIC QUESTION:
+            {}
 
-Please provide your analysis in the following JSON format:
-{{
-    "recommendation": {{
-        "action": "Buy|Sell|Hold|Rebalance|StopLoss",
-        "amount": <number if applicable>,
-        "target_price": <number if applicable>,
-        "adjustments": {{}} // for rebalance actions
-    }},
-    "reasoning": "<detailed explanation of your recommendation>",
-    "confidence": <number 0-1>,
-    "risk_assessment": {{
-        "risk_score": <number 0-1>,
-        "max_loss_estimate": <number>,
-        "position_risk_pct": <number>,
-        "market_risk_factors": ["factor1", "factor2"]
-    }},
-    "suggested_parameters": {{
-        "parameter_name": <suggested_value>
-    }}
-}}
+            Please provide your analysis in the following JSON format:
+            {{
+                "recommendation": {{
+                    "action": "Buy|Sell|Hold|Rebalance|StopLoss",
+                    "amount": <number if applicable>,
+                    "target_price": <number if applicable>,
+                    "adjustments": {{}} // for rebalance actions
+                }},
+                "reasoning": "<detailed explanation of your recommendation>",
+                "confidence": <number 0-1>,
+                "risk_assessment": {{
+                    "risk_score": <number 0-1>,
+                    "max_loss_estimate": <number>,
+                    "position_risk_pct": <number>,
+                    "market_risk_factors": ["factor1", "factor2"]
+                }},
+                "suggested_parameters": {{
+                    "parameter_name": <suggested_value>
+                }}
+            }}
 
-Consider market conditions, volatility, liquidity, and risk management in your analysis.
-"#,
+            Consider market conditions, volatility, liquidity, and risk management in your analysis.
+            "#,
             serde_json::to_string_pretty(&request.market_data).unwrap_or_default(),
             serde_json::to_string_pretty(&request.current_positions).unwrap_or_default(),
             serde_json::to_string_pretty(&request.strategy_config).unwrap_or_default(),
@@ -271,6 +165,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Call the OpenAI API
+    #[allow(dead_code)]
     async fn call_openai_api(
         &self,
         system_prompt: &str,
@@ -320,6 +215,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Parse AI response into structured format
+    #[allow(dead_code)]
     async fn parse_ai_response(&self, response: &str) -> Result<AIAnalysisResponse, AgentError> {
         let json: Value = serde_json::from_str(response)
             .map_err(|e| AgentError::AIAnalysis(format!("Failed to parse AI response: {}", e)))?;
@@ -354,6 +250,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Parse trading recommendation from JSON
+    #[allow(dead_code)]
     fn parse_recommendation(&self, json: &Value) -> Result<TradingRecommendation, AgentError> {
         let action = json["action"].as_str()
             .ok_or_else(|| AgentError::AIAnalysis("Missing action in recommendation".to_string()))?;
@@ -382,6 +279,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Parse market conditions from AI response
+    #[allow(dead_code)]
     async fn parse_market_conditions(&self, response: &str) -> Result<MarketConditions, AgentError> {
         let json: Value = serde_json::from_str(response)
             .map_err(|e| AgentError::AIAnalysis(format!("Failed to parse market conditions: {}", e)))?;
@@ -401,6 +299,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Parse risk assessment from AI response
+    #[allow(dead_code)]
     async fn parse_risk_assessment(&self, response: &str) -> Result<RiskAssessment, AgentError> {
         let json: Value = serde_json::from_str(response)
             .map_err(|e| AgentError::AIAnalysis(format!("Failed to parse risk assessment: {}", e)))?;
@@ -419,6 +318,7 @@ Consider market conditions, volatility, liquidity, and risk management in your a
     }
 
     /// Parse optimization suggestions from AI response
+    #[allow(dead_code)]
     async fn parse_optimization_response(&self, response: &str) -> Result<HashMap<String, f64>, AgentError> {
         let json: Value = serde_json::from_str(response)
             .map_err(|e| AgentError::AIAnalysis(format!("Failed to parse optimization response: {}", e)))?;
