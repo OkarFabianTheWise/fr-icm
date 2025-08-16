@@ -466,6 +466,10 @@
       ],
       "args": [
         {
+          "name": "bucket_name",
+          "type": "string"
+        },
+        {
           "name": "token_mint",
           "type": "pubkey"
         },
@@ -836,7 +840,12 @@
           "signer": true
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "bucket_name",
+          "type": "string"
+        }
+      ]
     },
     {
       "name": "swap_tokens",

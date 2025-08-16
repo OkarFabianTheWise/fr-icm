@@ -3,10 +3,12 @@
 //! Handles PostgreSQL connection pooling using tokio-postgres and deadpool for optimal performance.
 
 use anyhow::{Context, Result};
+use std::str::FromStr;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 // use std::env;
 use std::time::Duration;
 use tokio_postgres::NoTls;
+use std::env;
 
 /// Database configuration
 #[derive(Debug, Clone)]
@@ -55,6 +57,33 @@ impl DatabaseConfig {
             password: parsed.password().unwrap_or("").to_string(),
             dbname: parsed.path().trim_start_matches('/').to_string(),
             max_size: 16,
+            timeouts: deadpool_postgres::Timeouts {
+                wait: Some(Duration::from_secs(30)),
+                create: Some(Duration::from_secs(30)),
+                recycle: Some(Duration::from_secs(30)),
+            },
+        })
+    }
+
+    /// Create configuration from environment variables
+    pub fn from_env() -> Result<Self> {
+
+        let database_url = std::env::var("DATABASE_URL")
+            .context("DATABASE_URL must be set in the environment")?;
+
+        let config = tokio_postgres::Config::from_str(&database_url)
+            .context("Failed to parse DATABASE_URL")?;
+
+        Ok(Self {
+            host: config.get_hosts().get(0).map(|h| match h {
+                tokio_postgres::config::Host::Tcp(s) => s.clone(),
+                tokio_postgres::config::Host::Unix(s) => s.to_string_lossy().to_string(),
+            }).unwrap_or_default(),
+            port: config.get_ports().get(0).cloned().unwrap_or(5432),
+            user: config.get_user().map(|u| u.to_string()).unwrap_or_default(),
+            password: config.get_password().map(|p| String::from_utf8_lossy(p).to_string()).unwrap_or_default(),
+            dbname: config.get_dbname().map(|d| d.to_string()).unwrap_or_default(),
+            max_size: 16, // Default max size
             timeouts: deadpool_postgres::Timeouts {
                 wait: Some(Duration::from_secs(30)),
                 create: Some(Duration::from_secs(30)),

@@ -374,6 +374,7 @@ impl IcmProgramInstance {
                 system_program: system_program::id(),
             })
             .args(ContributeToBucket {
+                bucket_name: request.bucket_name.clone(),
                 token_mint,
                 amount: request.amount,
             })
@@ -616,7 +617,9 @@ impl IcmProgramInstance {
         let ixs = program
             .request()
             .accounts(accounts)
-            .args(StartTrading {})
+            .args(StartTrading {
+                bucket_name: request.bucket_name.clone()
+            })
             .instructions()?;
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(

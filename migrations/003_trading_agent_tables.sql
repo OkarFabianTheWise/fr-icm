@@ -1,6 +1,9 @@
 -- Create trading agent related tables for ICM server
 -- Migration: 003_trading_agent_tables.sql
 
+-- Enable pgcrypto extension for UUID generation
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Trading sessions table
 CREATE TABLE IF NOT EXISTS trading_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -78,6 +81,119 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
     UNIQUE(strategy_type, time_period, calculated_at)
 );
 
+-- Portfolio table
+CREATE TABLE IF NOT EXISTS portfolios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR NOT NULL REFERENCES user_profiles(user_pubkey),
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    total_value_usd DECIMAL(20, 8) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- PortfolioAsset table
+CREATE TABLE IF NOT EXISTS portfolio_assets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+    asset_symbol VARCHAR(50) NOT NULL,
+    asset_type VARCHAR(50) NOT NULL,
+    target_allocation_percent DECIMAL(10, 6) NOT NULL,
+    current_allocation_percent DECIMAL(10, 6) NOT NULL,
+    quantity DECIMAL(20, 8) NOT NULL,
+    average_cost_usd DECIMAL(20, 8) NOT NULL,
+    current_value_usd DECIMAL(20, 8) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Main pools table
+CREATE TABLE IF NOT EXISTS trading_pools (
+    id VARCHAR PRIMARY KEY,
+    creator_pubkey VARCHAR NOT NULL REFERENCES user_profiles(user_pubkey),
+    name VARCHAR NOT NULL,
+    strategy TEXT NOT NULL,
+    token_bucket TEXT[], -- JSON array of token addresses
+    phase VARCHAR CHECK (phase IN ('fundraising', 'trading', 'completed', 'failed')),
+    target_amount BIGINT NOT NULL,
+    raised_amount BIGINT DEFAULT 0,
+    min_contribution BIGINT NOT NULL,
+    max_contribution BIGINT NOT NULL,
+    contributor_count INTEGER DEFAULT 0,
+    trading_duration INTEGER NOT NULL, -- hours
+    fundraising_deadline TIMESTAMP NOT NULL,
+    trading_start_time TIMESTAMP,
+    trading_end_time TIMESTAMP,
+    management_fee INTEGER NOT NULL, -- basis points
+    performance_fee INTEGER NOT NULL, -- basis points
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Pool contributions
+CREATE TABLE IF NOT EXISTS pool_contributions (
+    id SERIAL PRIMARY KEY,
+    pool_id VARCHAR REFERENCES trading_pools(id),
+    contributor_pubkey VARCHAR NOT NULL,
+    amount BIGINT NOT NULL,
+    pool_share_percentage INTEGER NOT NULL, -- basis points
+    transaction_signature VARCHAR NOT NULL,
+    contributed_at TIMESTAMP DEFAULT NOW(),
+    claimed BOOLEAN DEFAULT FALSE
+);
+
+-- Trading records
+CREATE TABLE IF NOT EXISTS trade_records (
+    id SERIAL PRIMARY KEY,
+    pool_id VARCHAR REFERENCES trading_pools(id),
+    trade_type VARCHAR NOT NULL,
+    from_token VARCHAR NOT NULL,
+    to_token VARCHAR NOT NULL,
+    amount_in BIGINT NOT NULL,
+    amount_out BIGINT NOT NULL,
+    transaction_signature VARCHAR NOT NULL,
+    executed_at TIMESTAMP DEFAULT NOW(),
+    success BOOLEAN DEFAULT TRUE
+);
+
+-- pool_performance_snapshots — Time-series charting & PnL history
+CREATE TABLE IF NOT EXISTS pool_performance_snapshots (
+    id SERIAL PRIMARY KEY,
+    pool_id VARCHAR NOT NULL REFERENCES trading_pools(id),
+    snapshot_time TIMESTAMP DEFAULT NOW(),
+    portfolio_value BIGINT NOT NULL,         -- In USDC lamports
+    pnl_percentage INTEGER NOT NULL,         -- Basis points (-150 = -1.5%)
+    token_balances JSONB NOT NULL            -- Array of token balances per snapshot
+);
+
+-- pool_performance_metrics — Real-time analytics of pool health
+CREATE TABLE IF NOT EXISTS pool_performance_metrics (
+    pool_id VARCHAR PRIMARY KEY REFERENCES trading_pools(id),
+    current_pnl INTEGER NOT NULL,        -- Basis points
+    peak_pnl INTEGER NOT NULL,
+    drawdown INTEGER NOT NULL,
+    total_trades INTEGER NOT NULL,
+    successful_trades INTEGER NOT NULL,
+    last_updated TIMESTAMP DEFAULT NOW(),
+    roi_annualized INTEGER               -- Optional, if available
+);
+
+-- user_profiles — Aggregated wallet stats for dashboards
+CREATE TABLE IF NOT EXISTS user_profiles (
+    email VARCHAR, -- not NULL
+    password_hash VARCHAR,
+    user_pubkey VARCHAR PRIMARY KEY,
+    private_key INTEGER[], -- solana private key byte array [222, 323, ..]
+    total_pools_joined INTEGER DEFAULT 0,
+    active_contributions TEXT[] DEFAULT '{}',     -- List of pool IDs (active)
+    completed_contributions TEXT[] DEFAULT '{}',  -- List of pool IDs (completed)
+    total_contributed BIGINT DEFAULT 0,           -- USDC lamports
+    total_pnl BIGINT DEFAULT 0,                   -- Signed int (negative = loss)
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_trading_sessions_user_id ON trading_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_trading_sessions_status ON trading_sessions(status);
@@ -113,6 +229,9 @@ $$ language 'plpgsql';
 -- Create triggers for updated_at
 CREATE TRIGGER update_trading_sessions_updated_at 
     BEFORE UPDATE ON trading_sessions 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_portfolios_updated_at 
+    BEFORE UPDATE ON portfolios 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Add some helpful views for analytics

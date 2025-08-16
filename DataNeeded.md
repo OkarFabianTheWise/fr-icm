@@ -133,7 +133,7 @@ pub struct UserProfile {
 
 ## 📁 Off-Chain DB & API Schema (PostgreSQL)
 
-## ** Database Schema (PostgreSQL)**
+## **Database Schema (PostgreSQL)**
 
 ```sql
 -- Main pools table
@@ -221,6 +221,33 @@ CREATE TABLE user_profiles (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Portfolio table
+CREATE TABLE portfolios (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    total_value_usd DECIMAL(20, 8) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- PortfolioAsset table
+CREATE TABLE portfolio_assets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    portfolio_id UUID NOT NULL REFERENCES portfolios(id) ON DELETE CASCADE,
+    asset_symbol VARCHAR(50) NOT NULL,
+    asset_type VARCHAR(50) NOT NULL,
+    target_allocation_percent DECIMAL(10, 6) NOT NULL,
+    current_allocation_percent DECIMAL(10, 6) NOT NULL,
+    quantity DECIMAL(20, 8) NOT NULL,
+    average_cost_usd DECIMAL(20, 8) NOT NULL,
+    current_value_usd DECIMAL(20, 8) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ## 🧩 API & WebSocket (Off-Chain)
