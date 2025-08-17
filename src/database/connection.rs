@@ -7,8 +7,8 @@ use std::str::FromStr;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 // use std::env;
 use std::time::Duration;
-use tokio_postgres::tls::MakeTlsConnector;
 use native_tls::TlsConnector;
+use postgres_native_tls::MakeTlsConnector;
 use std::env;
 
 /// Database configuration
@@ -114,9 +114,9 @@ impl DatabaseConnection {
         pg_config.password(&config.password);
         pg_config.dbname(&config.dbname);
 
-        // Enable SSL using native-tls
-        let tls_connector = TlsConnector::builder().build().context("Failed to build TLS connector")?;
-        let tls = MakeTlsConnector::new(tls_connector);
+    // Enable SSL using native-tls
+    let tls_connector = TlsConnector::builder().build().context("Failed to build TLS connector")?;
+    let tls = MakeTlsConnector::new(tls_connector);
 
         let mgr_config = ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
