@@ -102,8 +102,12 @@ pub async fn start() {
         )
         .with_state(app_state);
 
-    // Define the server address - currently localhost only for development
-    let addr: std::net::SocketAddr = "127.0.0.1:3000".parse().expect("Invalid address format");
+    // Define the server address - use $PORT if set (Heroku), otherwise default to 3000
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
 
     // Create a TCP listener bound to the specified address
     let listener = TcpListener::bind(addr).await.expect(
