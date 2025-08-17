@@ -7,7 +7,8 @@ use std::str::FromStr;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 // use std::env;
 use std::time::Duration;
-use tokio_postgres::NoTls;
+use tokio_postgres::tls::MakeTlsConnector;
+use native_tls::TlsConnector;
 use std::env;
 
 /// Database configuration
@@ -105,19 +106,23 @@ impl DatabaseConnection {
     pub async fn new(config: DatabaseConfig) -> Result<Self> {
         let masked_host = format!("{}:{}/{}", config.host, config.port, config.dbname);
         tracing::info!("🔌 Connecting to database: {}", masked_host);
-        
+
         let mut pg_config = tokio_postgres::Config::new();
         pg_config.host(&config.host);
         pg_config.port(config.port);
         pg_config.user(&config.user);
         pg_config.password(&config.password);
         pg_config.dbname(&config.dbname);
-        
+
+        // Enable SSL using native-tls
+        let tls_connector = TlsConnector::builder().build().context("Failed to build TLS connector")?;
+        let tls = MakeTlsConnector::new(tls_connector);
+
         let mgr_config = ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         };
-        let mgr = Manager::from_config(pg_config, NoTls, mgr_config);
-        
+        let mgr = Manager::from_config(pg_config, tls, mgr_config);
+
         let pool = Pool::builder(mgr)
             .max_size(config.max_size)
             .wait_timeout(config.timeouts.wait)
@@ -132,14 +137,14 @@ impl DatabaseConnection {
             .get()
             .await
             .context("Failed to get connection from pool")?;
-        
+
         _client
             .query("SELECT 1", &[])
             .await
             .context("Failed to test database connection")?;
 
         tracing::info!("✅ Database connection established successfully");
-        
+
         Ok(Self { pool })
     }
 
