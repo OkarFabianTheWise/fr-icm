@@ -45,7 +45,8 @@ impl DatabaseConfig {
     pub fn from_url(url: &str) -> Result<Self> {
         let parsed = url::Url::parse(url)
             .context("Failed to parse database URL")?;
-        
+        tracing::debug!("Parsed database URL: {:?}", parsed);
+
         if parsed.scheme() != "postgresql" && parsed.scheme() != "postgres" {
             anyhow::bail!("Invalid database URL scheme, expected postgresql or postgres");
         }
