@@ -45,7 +45,8 @@ pub async fn start() {
     let jwt_service = Arc::new(crate::auth::jwt::JwtService::new(&jwt_secret));
 
     // Initialize database connection
-    let db = Arc::new(crate::database::connection::DatabaseConnection::from_env().await.expect("Failed to connect to DB"));
+    let db_config = crate::database::connection::DatabaseConfig::from_env().expect("Failed to load DB config from env");
+    let db = Arc::new(crate::database::connection::DatabaseConnection::new(db_config).await.expect("Failed to connect to DB"));
 
     // Create application state
     let app_state = AppState {
