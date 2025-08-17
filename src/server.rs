@@ -85,7 +85,7 @@ pub async fn start() {
             ServiceBuilder::new()
                 .layer(
                     CorsLayer::new()
-                        .allow_origin("http://localhost:3001".parse::<axum::http::HeaderValue>().unwrap()) // Allow frontend origin
+                        .allow_origin("https://fr-icm-ui.vercel.app".parse::<axum::http::HeaderValue>().unwrap()) // Allow frontend origin
                         .allow_methods([
                             axum::http::Method::GET,
                             axum::http::Method::POST,
