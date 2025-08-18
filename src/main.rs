@@ -78,6 +78,7 @@ async fn main() {
     // Initialize the tracing subscriber for structured logging
     // RUST_LOG =info
     // This sets up console output with timestamps and proper formatting
+    dotenv::dotenv().ok();
     tracing_subscriber
         ::registry()
         .with(

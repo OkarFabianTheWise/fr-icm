@@ -27,7 +27,6 @@ use crate::state_structs::{CreateBucketRequest, ContributeToBucketRequest, Start
 pub struct IcmProgramInstance {
     pub cluster: Cluster,
     pub payer_pubkey: Pubkey,
-    // Add other fields as needed
 }
 
 impl IcmProgramInstance {

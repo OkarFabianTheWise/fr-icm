@@ -29,3 +29,4 @@ pub mod icm;
 
 /// AI-powered trading agent endpoints
 pub mod agent;
+pub mod faucet;

@@ -33,7 +33,7 @@ solana-client = "2.0"
 spl-token = "6.0"
 spl-token-2022 = "9.0.0"
 spl-associated-token-account = { version = "4.0", default-features = false, features = ["no-entrypoint"] }
-
+dotenv = "0.15"
 base64 = "0.22"
 bincode = "1.3"
 anchor-client = { version = "0.31.1 ", features = ["async"] }

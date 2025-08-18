@@ -1,15 +1,15 @@
-//! Database Connection Management
-//! 
-//! Handles PostgreSQL connection pooling using tokio-postgres and deadpool for optimal performance.
-
+// Database Connection Management
+// 
+// Handles PostgreSQL connection pooling using tokio-postgres and deadpool for optimal performance.
+use crate::database::models::UserProfile;
 use anyhow::{Context, Result};
 use std::str::FromStr;
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
-// use std::env;
 use std::time::Duration;
 use native_tls::TlsConnector;
 use postgres_native_tls::MakeTlsConnector;
 use std::env;
+use crate::database::models::FromRow;
 
 /// Database configuration
 #[derive(Debug, Clone)]
@@ -21,6 +21,46 @@ pub struct DatabaseConfig {
     pub dbname: String,
     pub max_size: usize,
     pub timeouts: deadpool_postgres::Timeouts,
+}
+
+impl DatabaseConnection {
+    /// Fetch user profile by user_pubkey
+    pub async fn get_user_profile_by_pubkey(&self, user_pubkey: &str) -> Result<Option<UserProfile>> {
+        let client = self.pool.get().await.context("Failed to get DB connection")?;
+        let row = client
+            .query_opt(
+                "SELECT * FROM user_profiles WHERE user_pubkey = $1",
+                &[&user_pubkey],
+            )
+            .await
+            .context("Failed to query user profile by pubkey")?;
+        Ok(row.map(|r| UserProfile::from_row(&r).unwrap()))
+    }
+
+    /// Fetch user profile by email
+    pub async fn get_user_profile_by_email(&self, email: &str) -> Result<Option<UserProfile>> {
+        let client = self.pool.get().await.context("Failed to get DB connection")?;
+        let row = client
+            .query_opt(
+                "SELECT * FROM user_profiles WHERE email = $1",
+                &[&email],
+            )
+            .await
+            .context("Failed to query user profile by email")?;
+        Ok(row.map(|r| UserProfile::from_row(&r).unwrap()))
+    }
+
+    /// Update last_faucet_claim for a user
+    pub async fn update_last_faucet_claim(&self, user_pubkey: &str, ts: chrono::NaiveDateTime) -> Result<u64> {
+        let client = self.pool.get().await.context("Failed to get DB connection")?;
+        let n = client
+            .execute(
+                "UPDATE user_profiles SET last_faucet_claim = $1, updated_at = NOW() WHERE user_pubkey = $2",
+                &[&ts, &user_pubkey],
+            )
+            .await?;
+        Ok(n)
+    }
 }
 
 impl Default for DatabaseConfig {

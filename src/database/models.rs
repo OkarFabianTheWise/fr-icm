@@ -1,14 +1,3 @@
-
-//! Database Models
-//!
-//! Tokio-postgres compatible models for all database entities in the ICM system.
-//! Includes trading agent data persistence for analytics and learning.
-
-use bigdecimal::BigDecimal;
-/// Helper to convert rust_decimal::Decimal to bigdecimal::BigDecimal
-fn decimal_to_bigdecimal(decimal: Decimal) -> BigDecimal {
-    BigDecimal::from_str(&decimal.to_string()).unwrap()
-}
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -17,6 +6,55 @@ use uuid::Uuid;
 use rust_decimal::Decimal;
 use deadpool_postgres::Pool;
 use anyhow::Result;
+// use crate::database::models::FromRow;
+use bigdecimal::BigDecimal;
+
+
+/// User profile for faucet and dashboard
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub email: Option<String>,
+    pub password_hash: Option<String>,
+    pub user_pubkey: String,
+    pub private_key: Option<Vec<i32>>,
+    pub total_pools_joined: Option<i32>,
+    pub active_contributions: Option<Vec<String>>,
+    pub completed_contributions: Option<Vec<String>>,
+    pub total_contributed: Option<i64>,
+    pub total_pnl: Option<i64>,
+    pub last_faucet_claim: Option<chrono::NaiveDateTime>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
+}
+
+impl FromRow for UserProfile {
+    fn from_row(row: &tokio_postgres::Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            email: row.try_get("email").ok(),
+            password_hash: row.try_get("password_hash").ok(),
+            user_pubkey: row.try_get("user_pubkey")?,
+            private_key: row.try_get("private_key").ok(),
+            total_pools_joined: row.try_get("total_pools_joined").ok(),
+            active_contributions: row.try_get("active_contributions").ok(),
+            completed_contributions: row.try_get("completed_contributions").ok(),
+            total_contributed: row.try_get("total_contributed").ok(),
+            total_pnl: row.try_get("total_pnl").ok(),
+            last_faucet_claim: row.try_get("last_faucet_claim").ok(),
+            updated_at: row.try_get("updated_at").ok(),
+        })
+    }
+}
+
+// Database Models
+//
+// Tokio-postgres compatible models for all database entities in the ICM system.
+// Includes trading agent data persistence for analytics and learning.
+
+/// Helper to convert rust_decimal::Decimal to bigdecimal::BigDecimal
+fn decimal_to_bigdecimal(decimal: Decimal) -> BigDecimal {
+    BigDecimal::from_str(&decimal.to_string()).unwrap()
+}
+
+
 impl PortfolioAsset {
     /// Fetch all token mints (asset_symbol) for a given portfolio_id
     pub async fn fetch_token_mints_by_portfolio(pool: &Pool, portfolio_id: Uuid) -> Result<Vec<String>> {

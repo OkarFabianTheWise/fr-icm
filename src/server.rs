@@ -60,6 +60,7 @@ pub async fn start() {
     use crate::auth::middleware::AuthMiddleware;
     use axum::middleware;
 
+
     // Bucket endpoints require authentication
     let bucket_routes = Router::new()
         .route("/api/v1/bucket/create", post(crate::routes::icm::create_bucket))
@@ -72,11 +73,18 @@ pub async fn start() {
         .route("/api/v1/bucket/trading_pools", post(crate::routes::icm::get_trading_pool_info))
         .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token));
 
+    // Faucet route (no auth)
+    let faucet_routes = Router::new()
+        .route("/api/v1/faucet/claim", post(crate::routes::faucet::claim_faucet))
+        .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token))
+        .with_state(Arc::new(app_state.clone()));
+
     use tower::ServiceBuilder;
     // Main app router
     let app = Router::new()
         .route("/ping", get(ping)) // Health check endpoint
         .merge(bucket_routes)
+        .merge(faucet_routes)
         // Merge agent routes
         .merge(agent::create_routes())
         // Merge auth routes
@@ -85,7 +93,7 @@ pub async fn start() {
             ServiceBuilder::new()
                 .layer(
                     CorsLayer::new()
-                        .allow_origin("https://fr-icm-ui.vercel.app".parse::<axum::http::HeaderValue>().unwrap()) // Allow frontend origin
+                        .allow_origin(["https://fr-icm-ui.vercel.app".parse::<axum::http::HeaderValue>().unwrap(), "http://localhost:3001".parse::<axum::http::HeaderValue>().unwrap()]) // Allow frontend origin
                         .allow_methods([
                             axum::http::Method::GET,
                             axum::http::Method::POST,

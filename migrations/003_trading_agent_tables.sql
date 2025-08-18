@@ -191,6 +191,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     completed_contributions TEXT[] DEFAULT '{}',  -- List of pool IDs (completed)
     total_contributed BIGINT DEFAULT 0,           -- USDC lamports
     total_pnl BIGINT DEFAULT 0,                   -- Signed int (negative = loss)
+    last_faucet_claim TIMESTAMP,
     updated_at TIMESTAMP DEFAULT NOW()
 );
 

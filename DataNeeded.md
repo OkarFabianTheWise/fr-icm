@@ -38,6 +38,43 @@ pub struct PoolContribution {
 }
 
 // 3. Trade Records (individual trades)
+
+// --- SQL Trading Data Schema (off-chain, PostgreSQL example) ---
+-- trading_sessions table
+CREATE TABLE IF NOT EXISTS trading_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    strategy_type VARCHAR(50) NOT NULL,
+    config JSONB NOT NULL DEFAULT '{}',
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    end_time TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) NOT NULL DEFAULT 'Active',
+    total_trades INTEGER NOT NULL DEFAULT 0,
+    successful_trades INTEGER NOT NULL DEFAULT 0,
+    total_pnl DECIMAL(20, 8) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- trade_executions table
+CREATE TABLE IF NOT EXISTS trade_executions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES trading_sessions(id) ON DELETE CASCADE,
+    trade_id VARCHAR(100) NOT NULL,
+    strategy_type VARCHAR(50) NOT NULL,
+    input_token VARCHAR(50) NOT NULL,
+    output_token VARCHAR(50) NOT NULL,
+    input_amount DECIMAL(20, 8) NOT NULL,
+    output_amount DECIMAL(20, 8),
+    expected_output DECIMAL(20, 8) NOT NULL,
+    slippage DECIMAL(10, 6),
+    gas_fee DECIMAL(20, 8),
+    transaction_signature VARCHAR(200),
+    status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+    error_message TEXT,
+    execution_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 pub struct TradeRecord {
     pub pool_id: Pubkey,
     pub trade_id: u64,
