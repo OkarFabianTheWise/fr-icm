@@ -379,19 +379,100 @@ pub async fn start_trading(
             return ResponseJson(error_response);
         }
     };
-    // Convert to instance::StartTradingRequest
-    let instance_request = StartTradingRequest {
-        bucket_name: request.bucket_name.clone(),
-        creator_pubkey: request.creator_pubkey.clone()
-    };
-    match state.icm_client.start_trading_transaction(instance_request, keypair).await {
-        Ok(response) => ResponseJson(ApiResponse::success(response)),
+
+    // Save trading pool info to DB
+    let pool = state.db.pool();
+    let client = match pool.get().await {
+        Ok(c) => c,
         Err(e) => {
-            tracing::error!("[start_trading] Start trading error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
-            ResponseJson(error_response)
+            tracing::error!("[start_trading] DB connection error: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
+            return ResponseJson(error_response);
+        }
+    };
+    let insert_stmt = r#"
+        INSERT INTO trading_pools (id, creator_pubkey, name, strategy, token_bucket, total_amount_available_to_trade, trading_end_time, management_fee, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        RETURNING id
+    "#;
+    let pool_id = uuid::Uuid::new_v4().to_string();
+    let token_bucket_json = serde_json::to_value(&request.token_bucket).unwrap();
+    let result = client.query_one(
+        insert_stmt,
+        &[&pool_id, &request.creator_pubkey, &request.pool_name, &request.strategy, &token_bucket_json, &request.total_amount_available_to_trade, &request.trading_end_time, &request.management_fee]
+    ).await;
+    if let Err(e) = result {
+        tracing::error!("[start_trading] DB insert error: {}", e);
+        let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB insert error".to_string());
+        return ResponseJson(error_response);
+    }
+
+    // Derive token pairs from token_bucket (all unique pairs)
+    let mut token_pairs = Vec::new();
+    let tokens = &request.token_bucket;
+    for i in 0..tokens.len() {
+        for j in 0..tokens.len() {
+            if i != j {
+                token_pairs.push((tokens[i].clone(), tokens[j].clone()));
+            }
         }
     }
+
+    // Build a default StrategyConfig from the strategy string
+    let strategy_type = match request.strategy.to_lowercase().as_str() {
+        "arbitrage" => crate::agent::types::StrategyType::Arbitrage,
+        "gridtrading" | "grid_trading" => crate::agent::types::StrategyType::GridTrading,
+        "dca" => crate::agent::types::StrategyType::DCA,
+        "meanreversion" | "mean_reversion" => crate::agent::types::StrategyType::MeanReversion,
+        "trendfollowing" | "trend_following" => crate::agent::types::StrategyType::TrendFollowing,
+        _ => crate::agent::types::StrategyType::DCA,
+    };
+    let strategy_config = crate::agent::types::StrategyConfig {
+        strategy_type,
+        parameters: crate::agent::types::StrategyParameters {
+            min_spread_bps: 10,
+            max_slippage_bps: 50,
+            position_size_usd: 100.0,
+            rebalance_threshold_pct: 5.0,
+            lookback_periods: 10,
+            custom_params: std::collections::HashMap::new(),
+        },
+        risk_limits: crate::agent::types::RiskLimits {
+            max_position_size_usd: 1000.0,
+            max_daily_loss_pct: 10.0,
+            max_drawdown_pct: 20.0,
+            stop_loss_pct: 5.0,
+            take_profit_pct: 10.0,
+        },
+        execution_settings: crate::agent::types::ExecutionSettings {
+            priority_fee_percentile: 90,
+            max_priority_fee_lamports: 10000,
+            transaction_timeout_ms: 60000,
+            retry_attempts: 3,
+            jito_tip_lamports: 0,
+        },
+    };
+
+    let agent_config = crate::agent::trading_agent::TradingAgentConfigBuilder::new()
+        .with_token_pairs(token_pairs)
+        .with_strategy_configs(vec![strategy_config])
+        .with_portfolio_id(uuid::Uuid::parse_str(&pool_id).unwrap())
+        .build();
+    if let Ok(config) = agent_config {
+        let icm_client = state.icm_client.clone();
+        let db_pool = state.db.pool().clone();
+        tokio::spawn(async move {
+            let _ = crate::agent::trading_agent::TradingAgent::new(config, icm_client, db_pool).await;
+        });
+    } else {
+        tracing::error!("[start_trading] Invalid agent config");
+    }
+
+    let tx_response = UnsignedTransactionResponse {
+        transaction: pool_id.clone(),
+        message: format!("Trading pool created and agent started: {}", pool_id),
+    };
+    ResponseJson(ApiResponse::success(tx_response))
 }
 
 /// Swap tokens endpoint

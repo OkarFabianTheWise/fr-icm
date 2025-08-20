@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- Trading sessions table
 CREATE TABLE IF NOT EXISTS trading_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
     strategy_type VARCHAR(50) NOT NULL,
     config JSONB NOT NULL DEFAULT '{}',
     start_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -109,25 +109,15 @@ CREATE TABLE IF NOT EXISTS portfolio_assets (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Main pools table
 CREATE TABLE IF NOT EXISTS trading_pools (
     id VARCHAR PRIMARY KEY,
     creator_pubkey VARCHAR NOT NULL REFERENCES user_profiles(user_pubkey),
     name VARCHAR NOT NULL,
-    strategy TEXT NOT NULL,
-    token_bucket TEXT[], -- JSON array of token addresses
-    phase VARCHAR CHECK (phase IN ('fundraising', 'trading', 'completed', 'failed')),
-    target_amount BIGINT NOT NULL,
-    raised_amount BIGINT DEFAULT 0,
-    min_contribution BIGINT NOT NULL,
-    max_contribution BIGINT NOT NULL,
-    contributor_count INTEGER DEFAULT 0,
-    trading_duration INTEGER NOT NULL, -- hours
-    fundraising_deadline TIMESTAMP NOT NULL,
-    trading_start_time TIMESTAMP,
-    trading_end_time TIMESTAMP,
-    management_fee INTEGER NOT NULL, -- basis points
-    performance_fee INTEGER NOT NULL, -- basis points
+    strategy TEXT NOT NULL, -- Trading strategy identifier
+    token_bucket TEXT[] NOT NULL, -- Array of 1-3 token mint addresses
+    total_amount_available_to_trade BIGINT NOT NULL, -- Total funds available for trading (in lamports or smallest unit)
+    trading_end_time TIMESTAMP NOT NULL, -- Deadline/timeframe for trading to end
+    management_fee INTEGER NOT NULL, -- Management fee in basis points
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );

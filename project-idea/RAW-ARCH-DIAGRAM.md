@@ -37,12 +37,11 @@
                                        | - Asset Allocation updates      |
                                        +----------------------------------+
 
-                🧾 DB Layer: Postgres or ScyllaDB (for event + state tracking)
+                🧾 DB Layer: Postgres (for event + state tracking)
                 - Portfolios, User History, Swap Logs, Agent States
 ```
 
 ---
-
 
 ## 🧮 Data Flow Summary
 

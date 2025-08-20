@@ -87,8 +87,14 @@ pub struct ContributeToBucketRequest {
 
 #[derive(Deserialize)]
 pub struct StartTradingRequest {
-    pub bucket_name: String,
+    pub bucket_name: String, // for backward compatibility
+    pub strategy: String,
+    pub token_bucket: Vec<String>,
+    pub total_amount_available_to_trade: i64,
+    pub trading_end_time: String, // ISO8601 or RFC3339
+    pub management_fee: i32,
     pub creator_pubkey: String, // base58 pubkey
+    pub pool_name: String,
 }
 
 #[derive(Deserialize)]
