@@ -22,7 +22,7 @@ impl AuthMiddleware {
         mut req: Request,
         next: Next,
     ) -> Result<Response, StatusCode> {
-        tracing::info!("[AuthMiddleware] Incoming request: {} {}", req.method(), req.uri());
+        // tracing::info!("[AuthMiddleware] Incoming request: {} {}", req.method(), req.uri());
         // Try to extract token from Authorization header (Bearer) or access_token cookie
         let token_opt = req
             .headers()
@@ -55,20 +55,19 @@ impl AuthMiddleware {
         let token = match token_opt {
             Some(token) => token,
             None => {
-                tracing::warn!("[AuthMiddleware] Missing Authorization header and access_token cookie");
+                // tracing::warn!("[AuthMiddleware] Missing Authorization header and access_token cookie");
                 return Err(StatusCode::UNAUTHORIZED);
             }
         };
-        tracing::info!("[AuthMiddleware] Extracted token: {}", token);
 
         // Validate the token
         let claims = match jwt_service.validate_token(&token) {
             Ok(data) => {
-                tracing::info!("[AuthMiddleware] JWT validated successfully for sub={}, email={}", data.claims.sub, data.claims.email);
+                // tracing::info!("[AuthMiddleware] JWT validated successfully for sub={}, email={}", data.claims.sub, data.claims.email);
                 data.claims
             },
             Err(e) => {
-                tracing::warn!("[AuthMiddleware] JWT validation failed: {:?}", e);
+                // tracing::warn!("[AuthMiddleware] JWT validation failed: {:?}", e);
                 return Err(StatusCode::UNAUTHORIZED);
             }
         };
@@ -78,7 +77,7 @@ impl AuthMiddleware {
             id: claims.sub,
             email: claims.email,
         };
-        tracing::info!("[AuthMiddleware] AuthUser injected: id={}, email={}", auth_user.id, auth_user.email);
+        // tracing::info!("[AuthMiddleware] AuthUser injected: id={}, email={}", auth_user.id, auth_user.email);
 
         // Insert the user into request extensions for downstream handlers
         req.extensions_mut().insert(auth_user);

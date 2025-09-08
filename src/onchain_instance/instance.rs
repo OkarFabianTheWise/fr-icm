@@ -1,5 +1,4 @@
 // Add this constant for vault seed if not already present
-pub const VAULT_SEED: &[u8] = b"vault";
 use anchor_client::{Client, Cluster};
 use anchor_lang::prelude::*;
 use std::sync::Arc;
@@ -17,6 +16,7 @@ use spl_associated_token_account::get_associated_token_address;
 
 declare_program!(icm_program);
 pub const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
+pub const VAULT_SEED: &[u8] = b"vault";
 
 use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, ClaimRewards, CloseBucket};
 use icm_program::client::accounts::{CreateBucket as CreateBucketAccount, ContributeToBucket as ContributeToBucketAccount, StartTrading as StartTradingAccount, SwapTokens as SwapTokensAccount, ClaimRewards as ClaimRewardsAccount, CloseBucket as CloseBucketAccount, CreateProfile as CreateProfileAccount};
@@ -30,6 +30,14 @@ pub struct IcmProgramInstance {
 }
 
 impl IcmProgramInstance {
+    /// Create a new instance of the ICM program client
+    pub fn new(cluster: Cluster, payer: Keypair) -> Result<Self> {
+        Ok(Self {
+            cluster,
+            payer_pubkey: payer.pubkey(),
+        })
+    }
+    
     /// Agent swap tokens transaction
     pub async fn agent_swap_tokens_transaction(
         &self,
@@ -201,14 +209,6 @@ impl IcmProgramInstance {
         Ok(UnsignedTransactionResponse {
             transaction: sig.to_string(),
             message: format!("Swap tokens for '{}'", creator.to_string()),
-        })
-    }
-
-    /// Create a new instance of the ICM program client
-    pub fn new(cluster: Cluster, payer: Keypair) -> Result<Self> {
-        Ok(Self {
-            cluster,
-            payer_pubkey: payer.pubkey(),
         })
     }
 

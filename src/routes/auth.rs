@@ -1,5 +1,4 @@
 //! Auth routes for registration, login, and user info
-
 use axum::{Json, Router, routing::{post, get}, extract::State};
 use axum_extra::extract::cookie::{CookieJar, Cookie, SameSite};
 use axum::response::{Json as AxumJson, IntoResponse, Response};
@@ -53,20 +52,17 @@ pub async fn me(
 ) -> (StatusCode, AxumJson<Value>) {
     // Log all request headers
     let headers = req.headers();
-    for (name, value) in headers.iter() {
-        tracing::info!("Header: {}: {:?}", name, value);
-    }
-    tracing::info!("/api/auth/me called");
+    // for (name, value) in headers.iter() {
+    //     tracing::info!("Header: {}: {:?}", name, value);
+    // }
     let cookie_names: Vec<_> = jar.iter().map(|c| c.name().to_string()).collect();
-    tracing::info!("Cookies received: {:?}", cookie_names);
     // Get token from cookie (should be 'access_token', not 'kapitarise_access_token')
     let token = jar.get("access_token").map(|c| c.value().to_string());
     if token.is_none() {
-        tracing::warn!("No access_token cookie found");
+        // tracing::warn!("No access_token cookie found");
         return (StatusCode::UNAUTHORIZED, AxumJson(serde_json::json!({"error": "No token"})));
     }
     let token = token.unwrap();
-    tracing::info!("access_token cookie found: {}", token);
 
     // Validate token and get claims
     let claims = match app_state.jwt_service.decode_claims(&token) {
@@ -104,7 +100,6 @@ pub async fn me(
     let keypair = match crate::routes::icm::get_user_keypair_by_email(&user.email, &app_state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("Failed to get user keypair: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, AxumJson(serde_json::json!({"error": "Failed to get user keypair"})));
         }
     };
@@ -163,7 +158,7 @@ pub async fn register(
         "INSERT INTO user_profiles (user_id,user_pubkey, private_key, email, password_hash) VALUES ($1, $2, $3, $4, $5)",
         &[&user_id, &pubkey_str, &privkey_bytes, &email, &password_hash],
     ).await.map_err(|e| {
-        tracing::error!("Failed to insert user profile: {}", e);
+        // tracing::error!("Failed to insert user profile: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -224,7 +219,7 @@ pub async fn login(
         "SELECT user_pubkey, password_hash, user_id FROM user_profiles WHERE email = $1",
         &[&email],
     ).await.map_err(|e| {
-        tracing::error!("Failed to query user profile: {}", e);
+        // tracing::error!("Failed to query user profile: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -269,7 +264,7 @@ pub async fn login(
     let keypair = match crate::routes::icm::get_user_keypair_by_email(&user.email, &app_state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("Failed to get user keypair: {}", e);
+            // tracing::error!("Failed to get user keypair: {}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };

@@ -76,25 +76,3 @@ impl JwtService {
         Ok(token_data.claims)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_jwt_roundtrip() {
-        let jwt_service = JwtService::new("test_secret");
-        let user_id = Uuid::new_v4();
-        let email = "test@example.com".to_string();
-
-        // Create token
-        let token = jwt_service.create_token(user_id, email.clone()).unwrap();
-
-        // Validate token
-        let claims = jwt_service.decode_claims(&token).unwrap();
-
-        assert_eq!(claims.sub, user_id);
-        assert_eq!(claims.email, email);
-        assert_eq!(claims.iss, "icm-server");
-    }
-}

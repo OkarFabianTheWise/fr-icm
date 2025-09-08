@@ -1,11 +1,11 @@
-use axum::{Json, extract::{State}, response::IntoResponse};
+use axum::{Json, extract::{State, Request}, response::IntoResponse};
 use axum_extra::extract::cookie::CookieJar;
-use axum::http::Request;
 use serde::{Deserialize, Serialize};
 use crate::server::AppState;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use bs58;
+use solana_sdk::system_instruction;
 use std::{
     str::FromStr,
     sync::Arc,
@@ -25,7 +25,7 @@ pub struct FaucetResponse {
 }
 
 const USDC_MINT: &str = "7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF";
-const MAX_FAUCET_AMOUNT: u64 = 10_000_000; // 10 USDC (6 decimals)
+const MAX_FAUCET_AMOUNT: u64 = 100_000_000_000; // 100 USDC (9 decimals)
 const FAUCET_INTERVAL_SECS: u64 = 3 * 60 * 60; // 3 hours
 
 
@@ -86,6 +86,10 @@ pub async fn claim_faucet(
             }).into_response();
         }
     };
+
+    // log variables request+user data
+    tracing::debug!("User profile: {:?}", user_profile);
+
     let req = body;
     if req.amount > MAX_FAUCET_AMOUNT {
         return Json(FaucetResponse {
@@ -128,16 +132,23 @@ pub async fn claim_faucet(
             }).into_response();
         }
     };
+
+    tracing::debug!("Faucet public key: {:?}", faucet_keypair.pubkey());
+
     let usdc_mint = Pubkey::from_str(USDC_MINT).unwrap();
     let cluster = state.icm_client.cluster.clone();
     let client = anchor_client::Client::new_with_options(cluster, faucet_keypair.clone(), anchor_client::solana_sdk::commitment_config::CommitmentConfig::processed());
     let program = client.program(crate::onchain_instance::instance::ICM_PROGRAM_ID).unwrap();
     let rpc = program.rpc();
+
     // Derive faucet and user ATAs
     let faucet_ata = spl_associated_token_account::get_associated_token_address(&faucet_keypair.pubkey(), &usdc_mint);
     let user_ata = spl_associated_token_account::get_associated_token_address(&user_pubkey, &usdc_mint);
+    // tracing::info!("Faucet ATA: {}", faucet_ata);
+    // tracing::info!("User ATA: {}", user_ata);
     // Build transfer instruction
-    let ix = spl_token::instruction::transfer(
+    // Build USDC transfer instruction
+    let usdc_ix = spl_token::instruction::transfer(
         &spl_token::ID,
         &faucet_ata,
         &user_ata,
@@ -145,6 +156,14 @@ pub async fn claim_faucet(
         &[],
         req.amount,
     ).unwrap();
+
+    // Build SOL airdrop instruction (0.05 SOL = 50_000_000 lamports)
+    let sol_airdrop_lamports = 50_000_000u64;
+    let sol_ix = system_instruction::transfer(
+        &faucet_keypair.pubkey(),
+        &user_pubkey,
+        sol_airdrop_lamports,
+    );
     let recent_blockhash = match rpc.get_latest_blockhash().await {
         Ok(b) => b,
         Err(e) => {
@@ -155,12 +174,16 @@ pub async fn claim_faucet(
             }).into_response();
         }
     };
+    // Merge both instructions into a single transaction
     let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-        &[ix],
+        &[sol_ix, usdc_ix],
         Some(&faucet_keypair.pubkey()),
         &[faucet_keypair.as_ref()],
         recent_blockhash,
     );
+
+    // tracing::info!("Faucet transaction: {:?}", tx);
+
     match rpc.send_and_confirm_transaction(&tx).await {
         Ok(sig) => {
             // Update last_faucet_claim in DB

@@ -14,7 +14,7 @@ UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucke
 
 use std::convert::TryFrom;
 use std::str::FromStr;
-
+use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
 declare_program!(icm_program);
 const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
 
@@ -97,12 +97,11 @@ pub async fn create_profile(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>
 ) -> ResponseJson<ApiResponse<UnsignedTransactionResponse>> {
-    tracing::debug!("[create_profile] Creating profile for user {}", auth_user.email);
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[create_profile] Failed to get user keypair: {}", e);
+            // tracing::error!("[create_profile] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -124,12 +123,11 @@ pub async fn get_trading_pool(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Query(query): Query<GetBucketQuery>,
 ) -> ResponseJson<ApiResponse<TradingPool>> {
-    tracing::debug!("[get_trading_pool] Fetching trading pool for {}", query.bucket_name);
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[get_trading_pool] Failed to get user keypair: {}", e);
+            // tracing::error!("[get_trading_pool] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<TradingPool>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -162,7 +160,6 @@ pub async fn get_trading_pool(
                 trading_end_time: pool.trading_end_time,
                 phase: pool.phase,
                 management_fee: pool.management_fee,
-                // Add new fields
                 raised_amount: raised_amount_str,
                 contribution_percent,
             };
@@ -180,12 +177,11 @@ pub async fn get_all_pools_by_pda(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>
 ) -> ResponseJson<ApiResponse<Vec<BucketInfo>>> {
-    tracing::debug!("[get_all_pools] Fetching all pools");
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[get_all_pools] Failed to get user keypair: {}", e);
+            // tracing::error!("[get_all_pools] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<Vec<BucketInfo>>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -193,7 +189,7 @@ pub async fn get_all_pools_by_pda(
     match state.icm_client.get_all_pools_by_pda(keypair).await {
         Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
         Err(e) => {
-            tracing::error!("Failed to fetch all pools: {}", e);
+            // tracing::error!("Failed to fetch all pools: {}", e);
             ResponseJson(ApiResponse::<Vec<BucketInfo>>::error(e.to_string()))
         }
     }
@@ -206,12 +202,11 @@ pub async fn get_trading_pool_info(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Query(query): Query<GetBucketQuery>
 ) -> ResponseJson<ApiResponse<TradingPool>> {
-    tracing::debug!("[get_trading_pool_info] Fetching trading pool info for {}", query.bucket_name);
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[get_trading_pool_info] Failed to get user keypair: {}", e);
+            // tracing::error!("[get_trading_pool_info] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<TradingPool>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -248,7 +243,7 @@ pub async fn get_trading_pool_info(
             ResponseJson(ApiResponse::success(mapped))
         },
         Err(e) => {
-            tracing::error!("[get_trading_pool_info] Error fetching trading pool info: {}", e);
+            // tracing::error!("[get_trading_pool_info] Error fetching trading pool info: {}", e);
             ResponseJson(ApiResponse::<TradingPool>::error(e.to_string()))
         }
     }
@@ -265,7 +260,7 @@ pub async fn create_bucket(
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[create_bucket] Failed to get user keypair: {}", e);
+            // tracing::error!("[create_bucket] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -284,7 +279,7 @@ pub async fn create_bucket(
             let error_str = e.to_string();
             // Only try to create if it's actually missing (not other errors)
             if error_str.contains("Account does not exist") || error_str.contains("AccountNotFound") {
-                tracing::info!("[create_bucket] Creator profile doesn't exist, creating it first");
+                // tracing::info!("[create_bucket] Creator profile doesn't exist, creating it first");
                 match state.icm_client.create_profile_transaction(keypair.insecure_clone()).await {
                     Ok(profile_response) => {
                         tracing::info!("[create_bucket] Creator profile created: {}", profile_response.transaction);
@@ -294,8 +289,10 @@ pub async fn create_bucket(
                         // If it's "already in use", the profile actually exists, so continue
                         if create_error_str.contains("already in use") || create_error_str.contains("custom program error: 0x0") {
                             tracing::info!("[create_bucket] Creator profile already exists (race condition), continuing");
+                            // return result with error
+
                         } else {
-                            tracing::error!("[create_bucket] Failed to create creator profile: {}", create_err);
+                            // tracing::error!("[create_bucket] Failed to create creator profile: {}", create_err);
                             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(
                                 format!("Failed to create creator profile: {}", create_err)
                             );
@@ -324,7 +321,7 @@ pub async fn create_bucket(
     match state.icm_client.create_bucket_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
-            tracing::error!("[create_bucket] Create bucket error: {}", e);
+            // tracing::error!("[create_bucket] Create bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             ResponseJson(error_response)
         }
@@ -342,7 +339,7 @@ pub async fn contribute_to_bucket(
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            tracing::error!("[contribute_to_bucket] Failed to get user keypair: {}", e);
+            // tracing::error!("[contribute_to_bucket] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             return ResponseJson(error_response);
         }
@@ -356,7 +353,7 @@ pub async fn contribute_to_bucket(
     match state.icm_client.contribute_to_bucket_transaction(instance_request, keypair).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
-            tracing::error!("[contribute_to_bucket] Contribute to bucket error: {}", e);
+            // tracing::error!("[contribute_to_bucket] Contribute to bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
             ResponseJson(error_response)
         }
@@ -548,7 +545,6 @@ pub async fn swap_tokens(
     let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
     let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
     // For token_2022_program, use the constant from spl_token
-    use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
     let token_2022_program = TOKEN_2022_PROGRAM_ID;
 
     match state.icm_client.agent_swap_tokens_transaction(
@@ -645,8 +641,7 @@ pub async fn agent_swap_tokens(
     
     let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
     let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
-    // For token_2022_program, use the constant from spl_token
-    use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
+    // For token_2022_program, use the constant from spl_token_2022
     let token_2022_program = TOKEN_2022_PROGRAM_ID;
 
     match state.icm_client.agent_swap_tokens_transaction(
