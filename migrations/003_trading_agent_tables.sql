@@ -116,10 +116,10 @@ CREATE TABLE IF NOT EXISTS trading_pools (
     strategy TEXT NOT NULL, -- Trading strategy identifier
     token_bucket TEXT[] NOT NULL, -- Array of 1-3 token mint addresses
     total_amount_available_to_trade BIGINT NOT NULL, -- Total funds available for trading (in lamports or smallest unit)
-    trading_end_time TIMESTAMP NOT NULL, -- Deadline/timeframe for trading to end
+    trading_end_time TIMESTAMP WITH TIME ZONE NOT NULL, -- Deadline/timeframe for trading to end
     management_fee INTEGER NOT NULL, -- Management fee in basis points
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Pool contributions

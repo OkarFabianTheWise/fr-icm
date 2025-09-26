@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use std::collections::HashMap;
 use tokio_postgres::Row;
 use uuid::Uuid;
 use rust_decimal::Decimal;
 use deadpool_postgres::Pool;
 use anyhow::Result;
-// use crate::database::models::FromRow;
 use bigdecimal::BigDecimal;
 
 
@@ -521,5 +521,141 @@ impl FromRow for AIDecision {
             feedback_score: row.try_get::<_, Option<Decimal>>("feedback_score")?.map(decimal_to_bigdecimal),
             timestamp: row.try_get("timestamp")?,
         })
+    }
+}
+
+/// Trading pool from database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseTradingPool {
+    pub id: String,
+    pub creator_pubkey: String,
+    pub name: String,
+    pub strategy: String,
+    pub token_bucket: Vec<String>,
+    pub total_amount_available_to_trade: i64,
+    pub trading_end_time: DateTime<Utc>,
+    pub management_fee: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl FromRow for DatabaseTradingPool {
+    fn from_row(row: &Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            creator_pubkey: row.try_get("creator_pubkey")?,
+            name: row.try_get("name")?,
+            strategy: row.try_get("strategy")?,
+            token_bucket: row.try_get("token_bucket")?,
+            total_amount_available_to_trade: row.try_get("total_amount_available_to_trade")?,
+            trading_end_time: row.try_get("trading_end_time")?,
+            management_fee: row.try_get("management_fee")?,
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+}
+
+impl DatabaseTradingPool {
+    /// Fetch pool strategies by creator pubkey and pool name
+    pub async fn fetch_pool_strategy_by_creator_and_name(
+        pool: &Pool, 
+        creator_pubkey: &str, 
+        pool_name: &str
+    ) -> Result<Option<String>> {
+        let client = pool.get().await?;
+        let query = "SELECT strategy FROM trading_pools WHERE creator_pubkey = $1 AND name = $2";
+        
+        let normalized_creator = creator_pubkey.trim();
+        let normalized_name = pool_name.trim();
+        tracing::debug!("[fetch_pool_strategy_by_creator_and_name] Querying for creator: '{}' (len: {}), name: '{}' (len: {})", 
+            normalized_creator, normalized_creator.len(), normalized_name, normalized_name.len());
+        
+        // Debug: List all pools to see what's actually in the database
+        let debug_query = "SELECT creator_pubkey, name, strategy FROM trading_pools LIMIT 10";
+        if let Ok(debug_rows) = client.query(debug_query, &[]).await {
+            tracing::debug!("[fetch_pool_strategy_by_creator_and_name] All pools in DB:");
+            for debug_row in debug_rows {
+                let debug_creator: String = debug_row.try_get("creator_pubkey").unwrap_or_default();
+                let debug_name: String = debug_row.try_get("name").unwrap_or_default();
+                let debug_strategy: String = debug_row.try_get("strategy").unwrap_or_default();
+                tracing::debug!("  - creator: {}, name: {}, strategy: {}", debug_creator, debug_name, debug_strategy);
+            }
+        }
+        
+        match client.query_opt(query, &[&normalized_creator, &normalized_name]).await? {
+            Some(row) => {
+                let strategy: String = row.try_get("strategy")?;
+                tracing::debug!("[fetch_pool_strategy_by_creator_and_name] Found strategy: {}", strategy);
+                Ok(Some(strategy))
+            },
+            None => {
+                tracing::debug!("[fetch_pool_strategy_by_creator_and_name] No strategy found for creator: {}, name: {}", creator_pubkey, pool_name);
+                Ok(None)
+            },
+        }
+    }
+
+    /// Fetch all pool strategies as a map for efficient lookup
+    pub async fn fetch_all_pool_strategies(pool: &Pool) -> Result<HashMap<String, String>> {
+        let client = pool.get().await?;
+        let query = "SELECT creator_pubkey, name, strategy FROM trading_pools";
+        let rows = client.query(query, &[]).await?;
+        
+        let mut strategies = HashMap::new();
+        for row in rows {
+            let creator_pubkey: String = row.try_get("creator_pubkey")?;
+            let name: String = row.try_get("name")?;
+            let strategy: String = row.try_get("strategy")?;
+            let key = format!("{}_{}", creator_pubkey, name);
+            strategies.insert(key, strategy);
+        }
+        
+        Ok(strategies)
+    }
+
+    /// Insert a new trading pool record
+    pub async fn insert_trading_pool(
+        pool: &Pool,
+        creator_pubkey: &str,
+        name: &str,
+        strategy: &str,
+        token_bucket: Vec<String>,
+        total_amount_available_to_trade: i64,
+        trading_end_time: DateTime<Utc>,
+        management_fee: i32,
+    ) -> Result<()> {
+        let client = pool.get().await?;
+        let normalized_creator = creator_pubkey.trim();
+        let normalized_name = name.trim();
+        let normalized_strategy = strategy.trim();
+        let pool_id = format!("{}_{}", normalized_creator, normalized_name); // Create unique pool ID
+        
+        tracing::debug!("[insert_trading_pool] Inserting pool - creator: '{}', name: '{}', strategy: '{}'", 
+            normalized_creator, normalized_name, normalized_strategy);
+        
+        let query = r#"
+            INSERT INTO trading_pools (
+                id, creator_pubkey, name, strategy, token_bucket, 
+                total_amount_available_to_trade, trading_end_time, management_fee
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (id) DO UPDATE SET
+                strategy = EXCLUDED.strategy,
+                token_bucket = EXCLUDED.token_bucket,
+                total_amount_available_to_trade = EXCLUDED.total_amount_available_to_trade,
+                trading_end_time = EXCLUDED.trading_end_time,
+                management_fee = EXCLUDED.management_fee,
+                updated_at = NOW()
+        "#;
+        
+        let result = client.execute(
+            query,
+            &[&pool_id, &normalized_creator, &normalized_name, &normalized_strategy, &token_bucket, 
+              &total_amount_available_to_trade, &trading_end_time, &management_fee],
+        ).await?;
+        
+        tracing::debug!("[insert_trading_pool] Insert result: {} rows affected", result);
+        
+        Ok(())
     }
 }

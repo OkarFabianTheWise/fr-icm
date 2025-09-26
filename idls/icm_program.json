@@ -1,5 +1,5 @@
 {
-  "address": "BXwnU4VFAoQ3ES4SXZnXdMGsDufRrWwyrmXUNLhCH9JT",
+  "address": "7GtmU181bBiHF7fJ6QpXuSmXqpWEyvRjKgW4swPBUF4G",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -126,6 +126,74 @@
           }
         },
         {
+          "name": "trading_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  97,
+                  100,
+                  105,
+                  110,
+                  103,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
+              },
+              {
+                "kind": "account",
+                "path": "bucket.creator",
+                "account": "Bucket"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator_profile",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "bucket.creator",
+                "account": "Bucket"
+              }
+            ]
+          }
+        },
+        {
           "name": "contributor_token_account",
           "writable": true
         },
@@ -143,12 +211,7 @@
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
-      "args": [
-        {
-          "name": "token_mint",
-          "type": "pubkey"
-        }
-      ]
+      "args": []
     },
     {
       "name": "close_bucket",
@@ -335,8 +398,8 @@
                 "path": "contributor"
               },
               {
-                "kind": "arg",
-                "path": "token_mint"
+                "kind": "account",
+                "path": "usdc_mint"
               }
             ]
           }
@@ -377,8 +440,8 @@
                 "path": "contributor"
               },
               {
-                "kind": "arg",
-                "path": "token_mint"
+                "kind": "account",
+                "path": "usdc_mint"
               }
             ]
           }
@@ -401,8 +464,8 @@
                 "path": "token_program"
               },
               {
-                "kind": "arg",
-                "path": "token_mint"
+                "kind": "account",
+                "path": "usdc_mint"
               }
             ],
             "program": {
@@ -445,7 +508,8 @@
           }
         },
         {
-          "name": "token_mint"
+          "name": "usdc_mint",
+          "address": "7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF"
         },
         {
           "name": "contributor",
@@ -468,10 +532,6 @@
         {
           "name": "bucket_name",
           "type": "string"
-        },
-        {
-          "name": "token_mint",
-          "type": "pubkey"
         },
         {
           "name": "amount",
@@ -838,6 +898,45 @@
           "name": "creator",
           "writable": true,
           "signer": true
+        },
+        {
+          "name": "reserve"
+        },
+        {
+          "name": "reserve_liquidity_supply"
+        },
+        {
+          "name": "lending_market"
+        },
+        {
+          "name": "lending_market_authority"
+        },
+        {
+          "name": "destination_collateral",
+          "writable": true
+        },
+        {
+          "name": "source_liquidity",
+          "writable": true
+        },
+        {
+          "name": "reserve_collateral_mint"
+        },
+        {
+          "name": "pyth_oracle"
+        },
+        {
+          "name": "switchboard_oracle"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "solend_program",
+          "docs": [
+            "Address: ALend7Ketfx5bxh6ghsCDXAoDrhvEmsXT3cynB6aPLgx"
+          ]
         }
       ],
       "args": [

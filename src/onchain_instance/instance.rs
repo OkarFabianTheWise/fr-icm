@@ -328,11 +328,12 @@ impl IcmProgramInstance {
         let program = client.program(ICM_PROGRAM_ID)?;
 
         let contributor = keypair.pubkey();
+        
         // log both contributor and keypair_for_sign.pubkey() for debugging
         tracing::error!("Contributor: {}", contributor);
         tracing::error!("Keypair for signing: {}", keypair_for_sign.pubkey());
         let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
-        let token_mint = Pubkey::from_str("7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF")?;
+        let usdc_mint: Pubkey = Pubkey::from_str("7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF").expect("Invalid pubkey");
 
         // Derive bucket PDA: [b"bucket", bucket_name, creator]
         let (bucket_pda, _) = Pubkey::find_program_address(
@@ -342,21 +343,21 @@ impl IcmProgramInstance {
 
         // Derive contribution record PDA
         let (contribution_record_pda, _) = Pubkey::find_program_address(
-            &[b"contribution", bucket_pda.as_ref(), contributor.as_ref(), token_mint.as_ref()],
+            &[b"contribution", bucket_pda.as_ref(), contributor.as_ref(), usdc_mint.as_ref()],
             &ICM_PROGRAM_ID
         );
 
         // Derive pool contribution PDA
         let (pool_contribution_pda, _) = Pubkey::find_program_address(
-            &[b"pool_contribution", bucket_pda.as_ref(), contributor.as_ref(), token_mint.as_ref()],
+            &[b"pool_contribution", bucket_pda.as_ref(), contributor.as_ref(), usdc_mint.as_ref()],
             &ICM_PROGRAM_ID
         );
 
         // Derive contributor token account (ATA)
-        let contributor_token_account = get_associated_token_address(&contributor, &token_mint);
+        let contributor_token_account = get_associated_token_address(&contributor, &usdc_mint);
 
-        // Derive vault token account PDA: [b"vault", bucket_pda, token_mint]
-        let vault_token_account = get_associated_token_address(&bucket_pda, &token_mint);
+        // Derive vault token account PDA: [b"vault", bucket_pda, usdc_mint]
+        let vault_token_account = get_associated_token_address(&bucket_pda, &usdc_mint);
 
         let ixs = program
             .request()
@@ -366,7 +367,7 @@ impl IcmProgramInstance {
                 pool_contribution: pool_contribution_pda,
                 contributor_token_account,
                 vault_token_account,
-                token_mint,
+                usdc_mint,
                 contributor,
                 token_program: spl_token::ID,
                 associated_token_program: spl_associated_token_account::ID,
@@ -374,7 +375,6 @@ impl IcmProgramInstance {
             })
             .args(ContributeToBucket {
                 bucket_name: request.bucket_name.clone(),
-                token_mint,
                 amount: request.amount,
             })
             .instructions()?;
@@ -406,7 +406,6 @@ impl IcmProgramInstance {
         let program = client.program(ICM_PROGRAM_ID)?;
 
         let contributor = keypair.pubkey();
-        let token_mint = Pubkey::from_str(&request.token_mint).map_err(|e| anyhow!(e))?;
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.bucket_name.as_bytes(), contributor.as_ref()], &ICM_PROGRAM_ID);
         // TODO: Derive all required PDAs and accounts per IDL
         let contribution_record = Pubkey::default();
@@ -428,7 +427,6 @@ impl IcmProgramInstance {
             .request()
             .accounts(accounts)
             .args(ClaimRewards {
-                token_mint,
             })
             .instructions()?;
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
@@ -522,6 +520,7 @@ impl IcmProgramInstance {
             management_fee: anchor_pool.management_fee,
             raised_amount: None,
             contribution_percent: None,
+            strategy: None,
         })
     }
 
@@ -552,7 +551,8 @@ impl IcmProgramInstance {
     /// Get all pools (buckets) - stub implementation
     pub async fn get_all_pools_by_pda(
         &self, 
-        keypair: Keypair
+        keypair: Keypair,
+        db_pool: &deadpool_postgres::Pool
     ) -> Result<Vec<BucketInfo>> {
         let cluster = self.cluster.clone();
         let keypair_for_client = keypair.insecure_clone();
@@ -562,32 +562,45 @@ impl IcmProgramInstance {
         // Fetch all Bucket accounts
         let bucket_accounts = program.accounts::<icm_program::accounts::Bucket>(vec![]).await?;
 
+        // Fetch all pool strategies from database for efficient lookup
+        let strategies = crate::database::models::DatabaseTradingPool::fetch_all_pool_strategies(db_pool)
+            .await
+            .unwrap_or_else(|_| std::collections::HashMap::new());
+
         let buckets: Vec<BucketInfo> = bucket_accounts
             .into_iter()
-            .map(|(pubkey, anchor_bucket)| BucketInfo {
-                public_key: pubkey.to_string(),
-                account: BucketAccount {
-                    creator: anchor_bucket.creator.to_string(),
-                    name: anchor_bucket.name.clone(),
-                    token_mints: anchor_bucket.token_mints.iter().map(|pk| pk.to_string()).collect(),
-                    contribution_deadline: anchor_bucket.contribution_deadline.to_string(),
-                    trading_deadline: anchor_bucket.trading_deadline.to_string(),
-                    creator_fee_percent: anchor_bucket.creator_fee_percent,
-                    status: format!("{:?}", anchor_bucket.status),
-                    trading_started_at: anchor_bucket.trading_started_at.to_string(),
-                    closed_at: anchor_bucket.closed_at.to_string(),
-                    bump: anchor_bucket.bump,
-                    creator_profile: anchor_bucket.creator_profile,
-                    performance_fee: anchor_bucket.performance_fee,
-                    raised_amount: anchor_bucket.raised_amount,
-                    contributor_count: anchor_bucket.contributor_count,
-                },
+            .map(|(pubkey, anchor_bucket)| {
+                let creator = anchor_bucket.creator.to_string();
+                let name = anchor_bucket.name.clone();
+                let strategy_key = format!("{}_{}", creator, name);
+                let strategy = strategies.get(&strategy_key).cloned();
+                
+                BucketInfo {
+                    public_key: pubkey.to_string(),
+                    account: BucketAccount {
+                        creator,
+                        name,
+                        token_mints: anchor_bucket.token_mints.iter().map(|pk| pk.to_string()).collect(),
+                        contribution_deadline: anchor_bucket.contribution_deadline.to_string(),
+                        trading_deadline: anchor_bucket.trading_deadline.to_string(),
+                        creator_fee_percent: anchor_bucket.creator_fee_percent,
+                        status: format!("{:?}", anchor_bucket.status),
+                        trading_started_at: anchor_bucket.trading_started_at.to_string(),
+                        closed_at: anchor_bucket.closed_at.to_string(),
+                        bump: anchor_bucket.bump,
+                        creator_profile: anchor_bucket.creator_profile,
+                        performance_fee: anchor_bucket.performance_fee,
+                        raised_amount: anchor_bucket.raised_amount,
+                        contributor_count: anchor_bucket.contributor_count,
+                        strategy,
+                    },
+                }
             })
             .collect();
 
-        for bucket in &buckets {
-            println!("Bucket: {:?}", bucket);
-        }
+        // for bucket in &buckets {
+        //     println!("Bucket: {:?}", bucket);
+        // }
         Ok(buckets)
     }
 
@@ -640,5 +653,3 @@ impl IcmProgramInstance {
         UnsignedTransactionResponse { transaction: sig, message }
     }
 }
-
-

@@ -8,6 +8,8 @@ use axum::extract::Query;
 use axum::response::Json as ResponseJson;
 use anyhow::Result;
 use anchor_lang::declare_program;
+use chrono::{DateTime, Utc, Duration};
+use uuid;
 
 use crate::state_structs::{CreateBucketRequest,
 UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ContributeToBucketRequest, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
@@ -39,6 +41,7 @@ impl From<icm_program::accounts::TradingPool> for TradingPool {
             management_fee: src.management_fee,
             raised_amount: None,
             contribution_percent: None,
+            strategy: None,
         }
     }
 }
@@ -133,6 +136,8 @@ pub async fn get_trading_pool(
         }
     };
     let raised_amount = query.raised_amount.clone();
+    let creator_pubkey = query.creator_pubkey.clone();
+    let bucket_name = query.bucket_name.clone();
     match state.icm_client.fetch_trading_pool_by_pda(query, keypair).await {
         Ok(pool) => {
             // Calculate contribution_percent if raised_amount is provided
@@ -145,6 +150,54 @@ pub async fn get_trading_pool(
             } else {
                 (None, None)
             };
+
+            // Fetch strategy from database
+            tracing::debug!("[get_trading_pool] Fetching strategy for creator: {}, bucket: {}", creator_pubkey, bucket_name);
+            let strategy = match crate::database::models::DatabaseTradingPool::fetch_pool_strategy_by_creator_and_name(
+                state.db.pool(),
+                &creator_pubkey,
+                &bucket_name,
+            ).await {
+                Ok(strategy_opt) => {
+                    tracing::debug!("[get_trading_pool] Strategy fetch result: {:?}", strategy_opt);
+                    strategy_opt
+                },
+                Err(e) => {
+                    tracing::warn!("[get_trading_pool] Failed to fetch strategy from database: {}", e);
+                    None
+                }
+            };
+
+            // Calculate actual pool status based on current time and deadlines
+            let current_time = chrono::Utc::now().timestamp();
+            let fundraising_deadline = pool.fundraising_deadline.parse::<i64>().unwrap_or(0);
+            let trading_start = pool.trading_start_time.as_ref().and_then(|t| t.parse::<i64>().ok());
+            let trading_end = pool.trading_end_time.as_ref().and_then(|t| t.parse::<i64>().ok());
+            
+            let computed_phase = match pool.phase.as_str() {
+                "Raising" => {
+                    if current_time < fundraising_deadline {
+                        "Raising".to_string()
+                    } else if trading_start.is_some() {
+                        "Trading".to_string()
+                    } else {
+                        "Closed".to_string()
+                    }
+                },
+                "Trading" => {
+                    if let Some(end_time) = trading_end {
+                        if current_time < end_time {
+                            "Trading".to_string()
+                        } else {
+                            "Closed".to_string()
+                        }
+                    } else {
+                        "Trading".to_string()
+                    }
+                },
+                _ => pool.phase.clone(),
+            };
+
             let mapped = TradingPool {
                 pool_id: pool.pool_id,
                 pool_bump: pool.pool_bump,
@@ -158,10 +211,11 @@ pub async fn get_trading_pool(
                 fundraising_deadline: pool.fundraising_deadline,
                 trading_start_time: pool.trading_start_time,
                 trading_end_time: pool.trading_end_time,
-                phase: pool.phase,
+                phase: computed_phase, // Use computed phase instead of raw phase
                 management_fee: pool.management_fee,
                 raised_amount: raised_amount_str,
                 contribution_percent,
+                strategy,
             };
             ResponseJson(ApiResponse::success(mapped))
         },
@@ -186,7 +240,7 @@ pub async fn get_all_pools_by_pda(
             return ResponseJson(error_response);
         }
     };
-    match state.icm_client.get_all_pools_by_pda(keypair).await {
+    match state.icm_client.get_all_pools_by_pda(keypair, state.db.pool()).await {
         Ok(all_pools) => ResponseJson(ApiResponse::success(all_pools)),
         Err(e) => {
             // tracing::error!("Failed to fetch all pools: {}", e);
@@ -206,11 +260,15 @@ pub async fn get_trading_pool_info(
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
         Ok(kp) => kp,
         Err(e) => {
-            // tracing::error!("[get_trading_pool_info] Failed to get user keypair: {}", e);
+            tracing::error!("[get_trading_pool_info] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<TradingPool>::error(e.to_string());
             return ResponseJson(error_response);
         }
     };
+
+    // Log query parameters
+    tracing::debug!("[get_trading_pool_info] Query parameters: {:?}", query);
+
     match state.icm_client.fetch_trading_pool_by_pda(query.clone(), keypair).await {
         Ok(pool_info) => {
             // Calculate contribution_percent if raised_amount is provided
@@ -222,6 +280,54 @@ pub async fn get_trading_pool_info(
             } else {
                 (None, None)
             };
+
+            // Fetch strategy from database
+            tracing::debug!("[get_trading_pool_info] Fetching strategy for creator: {}, bucket: {}", query.creator_pubkey, query.bucket_name);
+            let strategy = match crate::database::models::DatabaseTradingPool::fetch_pool_strategy_by_creator_and_name(
+                state.db.pool(),
+                &query.creator_pubkey,
+                &query.bucket_name,
+            ).await {
+                Ok(strategy_opt) => {
+                    tracing::debug!("[get_trading_pool_info] Strategy fetch result: {:?}", strategy_opt);
+                    strategy_opt
+                },
+                Err(e) => {
+                    tracing::warn!("[get_trading_pool_info] Failed to fetch strategy from database: {}", e);
+                    None
+                }
+            };
+
+            // Calculate actual pool status based on current time and deadlines
+            let current_time = chrono::Utc::now().timestamp();
+            let fundraising_deadline = pool_info.fundraising_deadline.parse::<i64>().unwrap_or(0);
+            let trading_start = pool_info.trading_start_time.as_ref().and_then(|t| t.parse::<i64>().ok());
+            let trading_end = pool_info.trading_end_time.as_ref().and_then(|t| t.parse::<i64>().ok());
+            
+            let computed_phase = match pool_info.phase.as_str() {
+                "Raising" => {
+                    if current_time < fundraising_deadline {
+                        "Raising".to_string()
+                    } else if trading_start.is_some() {
+                        "Trading".to_string()
+                    } else {
+                        "Closed".to_string()
+                    }
+                },
+                "Trading" => {
+                    if let Some(end_time) = trading_end {
+                        if current_time < end_time {
+                            "Trading".to_string()
+                        } else {
+                            "Closed".to_string()
+                        }
+                    } else {
+                        "Trading".to_string()
+                    }
+                },
+                _ => pool_info.phase.clone(),
+            };
+
             let mapped = TradingPool {
                 pool_id: pool_info.pool_id,
                 pool_bump: pool_info.pool_bump,
@@ -235,15 +341,16 @@ pub async fn get_trading_pool_info(
                 fundraising_deadline: pool_info.fundraising_deadline,
                 trading_start_time: pool_info.trading_start_time,
                 trading_end_time: pool_info.trading_end_time,
-                phase: pool_info.phase,
+                phase: computed_phase, // Use computed phase instead of raw phase
                 management_fee: pool_info.management_fee,
                 raised_amount: raised_amount_str,
                 contribution_percent,
+                strategy,
             };
             ResponseJson(ApiResponse::success(mapped))
         },
         Err(e) => {
-            // tracing::error!("[get_trading_pool_info] Error fetching trading pool info: {}", e);
+            tracing::error!("[get_trading_pool_info] Error fetching trading pool info: {}", e);
             ResponseJson(ApiResponse::<TradingPool>::error(e.to_string()))
         }
     }
@@ -308,8 +415,8 @@ pub async fn create_bucket(
 
     // Convert to instance::CreateBucketRequest
     let instance_request = CreateBucketRequest {
-        name: request.name,
-        token_mints: request.token_mints,
+        name: request.name.clone(),
+        token_mints: request.token_mints.clone(),
         contribution_window_days: request.contribution_window_days,
         trading_window_days: request.trading_window_days,
         creator_fee_percent: request.creator_fee_percent,
@@ -317,9 +424,35 @@ pub async fn create_bucket(
         min_contribution: request.min_contribution,
         max_contribution: request.max_contribution,
         management_fee: request.management_fee,
+        strategy: request.strategy.clone(),
     };
-    match state.icm_client.create_bucket_transaction(instance_request, keypair).await {
-        Ok(response) => ResponseJson(ApiResponse::success(response)),
+    match state.icm_client.create_bucket_transaction(instance_request, keypair.insecure_clone()).await {
+        Ok(response) => {
+            // Save pool information to database after successful blockchain transaction
+            let creator_pubkey = keypair.pubkey().to_string();
+            let trading_end_time = chrono::Utc::now() + chrono::Duration::days(request.trading_window_days as i64);
+            
+            tracing::debug!("[create_bucket] Saving pool to database - creator: {}, name: {}, strategy: {}", 
+                creator_pubkey, request.name, request.strategy);
+            
+            if let Err(db_err) = crate::database::models::DatabaseTradingPool::insert_trading_pool(
+                state.db.pool(),
+                &creator_pubkey,
+                &request.name,
+                &request.strategy,
+                request.token_mints.clone(),
+                request.target_amount as i64,
+                trading_end_time,
+                request.management_fee as i32,
+            ).await {
+                tracing::warn!("[create_bucket] Failed to save pool to database: {}", db_err);
+            } else {
+                tracing::info!("[create_bucket] Pool saved to database successfully - creator: {}, name: {}, strategy: {}", 
+                    creator_pubkey, request.name, request.strategy);
+            }
+            
+            ResponseJson(ApiResponse::success(response))
+        },
         Err(e) => {
             // tracing::error!("[create_bucket] Create bucket error: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -377,30 +510,27 @@ pub async fn start_trading(
         }
     };
 
-    // Save trading pool info to DB
-    let pool = state.db.pool();
-    let client = match pool.get().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[start_trading] DB connection error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-    let insert_stmt = r#"
-        INSERT INTO trading_pools (id, creator_pubkey, name, strategy, token_bucket, total_amount_available_to_trade, trading_end_time, management_fee, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-        RETURNING id
-    "#;
+    // Generate a unique pool ID
     let pool_id = uuid::Uuid::new_v4().to_string();
-    let token_bucket_json = serde_json::to_value(&request.token_bucket).unwrap();
-    let result = client.query_one(
-        insert_stmt,
-        &[&pool_id, &request.creator_pubkey, &request.pool_name, &request.strategy, &token_bucket_json, &request.total_amount_available_to_trade, &request.trading_end_time, &request.management_fee]
-    ).await;
-    if let Err(e) = result {
-        tracing::error!("[start_trading] DB insert error: {}", e);
-        let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB insert error".to_string());
+    
+    // Save trading pool info to DB using the standardized function
+    let trading_end_time = chrono::DateTime::parse_from_rfc3339(&request.trading_end_time)
+        .map_err(|e| format!("Invalid trading_end_time format: {}", e))
+        .and_then(|dt| Ok(dt.with_timezone(&chrono::Utc)))
+        .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::days(30)); // Default to 30 days if parsing fails
+    
+    if let Err(e) = crate::database::models::DatabaseTradingPool::insert_trading_pool(
+        state.db.pool(),
+        &request.creator_pubkey,
+        &request.pool_name,
+        &request.strategy,
+        request.token_bucket.clone(),
+        request.total_amount_available_to_trade,
+        trading_end_time,
+        request.management_fee,
+    ).await {
+        tracing::error!("[start_trading] Failed to save pool to database: {}", e);
+        let error_response = ApiResponse::<UnsignedTransactionResponse>::error("Failed to save pool to database".to_string());
         return ResponseJson(error_response);
     }
 

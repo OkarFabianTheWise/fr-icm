@@ -21,6 +21,7 @@ pub struct TradingPool {
     // New fields for UI
     pub raised_amount: Option<String>,
     pub contribution_percent: Option<f64>,
+    pub strategy: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -49,6 +50,7 @@ pub struct BucketAccount {
     pub performance_fee: u16,
     pub raised_amount: u64,
     pub contributor_count: u32,
+    pub strategy: Option<String>, // Trading strategy from database
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -76,6 +78,7 @@ pub struct CreateBucketRequest {
     pub min_contribution: u64,
     pub max_contribution: u64,
     pub management_fee: u16,
+    pub strategy: String, // Trading strategy for the pool
 }
 
 #[derive(Deserialize)]

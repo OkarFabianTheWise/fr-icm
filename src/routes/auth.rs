@@ -103,7 +103,7 @@ pub async fn me(
             return (StatusCode::INTERNAL_SERVER_ERROR, AxumJson(serde_json::json!({"error": "Failed to get user keypair"})));
         }
     };
-    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair).await {
+    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair, app_state.db.pool()).await {
         Ok(pools) => pools,
         Err(e) => {
             tracing::error!("Failed to fetch all pools: {}", e);
@@ -268,7 +268,7 @@ pub async fn login(
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
-    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair).await {
+    let all_pools = match app_state.icm_client.get_all_pools_by_pda(keypair, app_state.db.pool()).await {
         Ok(pools) => pools,
         Err(e) => {
             tracing::error!("Failed to fetch all pools: {}", e);
