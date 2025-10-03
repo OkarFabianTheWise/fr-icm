@@ -4,7 +4,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, StatusCode, Method},
     middleware::Next,
     response::Response,
 };
@@ -22,6 +22,10 @@ impl AuthMiddleware {
         mut req: Request,
         next: Next,
     ) -> Result<Response, StatusCode> {
+        // Allow CORS preflight (OPTIONS) to pass through without authentication.
+        if req.method() == &Method::OPTIONS {
+            return Ok(next.run(req).await);
+        }
         // tracing::info!("[AuthMiddleware] Incoming request: {} {}", req.method(), req.uri());
         // Try to extract token from Authorization header (Bearer) or access_token cookie
         let token_opt = req
@@ -91,6 +95,11 @@ impl AuthMiddleware {
         mut req: Request,
         next: Next,
     ) -> Response {
+        // Allow CORS preflight (OPTIONS) to pass through without attempting auth.
+        if req.method() == &Method::OPTIONS {
+            return next.run(req).await;
+        }
+
         // Try to extract and validate token, but don't fail if missing
         if let Some(auth_header) = req
             .headers()
