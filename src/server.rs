@@ -9,8 +9,7 @@ use std::sync::Arc;
 use anchor_client::Cluster;
 use solana_sdk::signature::Keypair;
 use tokio::sync::RwLock;
-use http::{HeaderValue, Method};
-
+use axum::http::{HeaderValue, Method, header};
 use crate::routes::health::ping;
 use crate::routes::agent;
 use crate::onchain_instance::instance::IcmProgramInstance;
@@ -102,10 +101,10 @@ pub async fn start() {
         .allow_origin(allowed_origins)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([
-            http::header::ORIGIN,
-            http::header::CONTENT_TYPE,
-            http::header::ACCEPT,
-            http::header::AUTHORIZATION,
+            header::ORIGIN,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            header::AUTHORIZATION,
         ])
         .allow_credentials(true);
 
