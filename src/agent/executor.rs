@@ -12,13 +12,14 @@ use crate::state_structs::{SwapTokensRequest, UnsignedTransactionResponse};
 use crate::onchain_instance::instance::IcmProgramInstance;
 use solana_sdk::signature::{
     read_keypair_file,
+    Signer,
 };
 use std::str::FromStr;
 
-use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
 use std::result::Result as StdResult;
 
-const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6";
+// Jupiter API removed - now using Raydium
+// const JUPITER_SWAP_API: &str = "https://quote-api.jup.ag/v6";
 
 /// Executes trading plans by building and submitting transactions
 #[derive(Debug)]
@@ -238,11 +239,14 @@ impl ExecutorHandle {
             bucket: plan.bucket_pubkey.to_string(),
             input_mint: plan.input_mint.to_string(),
             output_mint: plan.output_mint.to_string(),
-            route_plan: plan.route_plan.clone(),
             in_amount: plan.input_amount,
             quoted_out_amount: plan.min_output_amount,
             slippage_bps: plan.max_slippage_bps,
-            platform_fee_bps: 50, // Could be configured
+            // Raydium fields - these should be populated from plan or environment
+            amm: None, // TODO: Get from plan or configuration
+            amm_authority: None, // TODO: Get from plan or configuration
+            pool_coin_token_account: None, // TODO: Get from plan or configuration
+            pool_pc_token_account: None, // TODO: Get from plan or configuration
         };
 
         // Fetch bucket_name from the database using plan.bucket_pubkey
@@ -253,11 +257,21 @@ impl ExecutorHandle {
 
         let input_mint = plan.input_mint;
         let output_mint = plan.output_mint;
-        let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
-        let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
-        let token_2022_program = TOKEN_2022_PROGRAM_ID;
-        let input_mint_program = Pubkey::default();
-        let output_mint_program = token_2022_program;
+        
+        // Raydium parameters
+        let raydium_amm_program = Pubkey::from_str(&std::env::var("RAYDIUM_AMM_PROGRAM").unwrap_or_else(|_| "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8".to_string())).expect("Invalid RAYDIUM_AMM_PROGRAM");
+        let amm = Pubkey::from_str(&std::env::var("DEFAULT_AMM").expect("DEFAULT_AMM env var required")).expect("Invalid DEFAULT_AMM");
+        let amm_authority = Pubkey::from_str(&std::env::var("DEFAULT_AMM_AUTHORITY").expect("DEFAULT_AMM_AUTHORITY env var required")).expect("Invalid DEFAULT_AMM_AUTHORITY");
+        let pool_coin_token_account = Pubkey::from_str(&std::env::var("DEFAULT_POOL_COIN_TOKEN_ACCOUNT").expect("DEFAULT_POOL_COIN_TOKEN_ACCOUNT env var required")).expect("Invalid DEFAULT_POOL_COIN_TOKEN_ACCOUNT");
+        let pool_pc_token_account = Pubkey::from_str(&std::env::var("DEFAULT_POOL_PC_TOKEN_ACCOUNT").expect("DEFAULT_POOL_PC_TOKEN_ACCOUNT env var required")).expect("Invalid DEFAULT_POOL_PC_TOKEN_ACCOUNT");
+        
+        // For user_authority, use the bucket PDA (same as in routes)
+        let creator = keypair.pubkey();
+        let (bucket_pda, _) = Pubkey::find_program_address(
+            &[b"bucket", bucket_name.as_bytes(), creator.as_ref()],
+            &crate::onchain_instance::instance::ICM_PROGRAM_ID,
+        );
+        let user_authority = bucket_pda;
 
         let tx_response = self.icm_client.agent_swap_tokens_transaction(
             swap_request,
@@ -265,11 +279,12 @@ impl ExecutorHandle {
             &bucket_name,
             input_mint,
             output_mint,
-            jupiter_program,
-            token_2022_program,
-            platform_fee_account,
-            input_mint_program,
-            output_mint_program,
+            raydium_amm_program,
+            amm,
+            amm_authority,
+            pool_coin_token_account,
+            pool_pc_token_account,
+            user_authority,
         ).await.map_err(|e| AgentError::TransactionFailed(format!("ICM swap failed: {}", e)))?;
 
         Ok(tx_response)
@@ -281,74 +296,21 @@ pub async fn fetch_bucket_name_by_pubkey(_bucket_pubkey: Pubkey) -> StdResult<St
     Ok("bucket_name_from_db".to_string())
 }
 
-    /// Get swap instructions from Jupiter API
+    // Jupiter API functions removed - now using Raydium direct integration
+    // TODO: Implement Raydium-specific routing and quote functions if needed
+    /*
+    /// Get swap instructions from Jupiter API (DEPRECATED - moved to Raydium)
     async fn get_jupiter_swap_instructions(&self, plan: &TradingPlan) -> StdResult<Value, AgentError> {
-        let swap_request = json!({
-            "quoteResponse": {
-                "inputMint": plan.input_mint.to_string(),
-                "outputMint": plan.output_mint.to_string(),
-                "inAmount": plan.input_amount.to_string(),
-                "outAmount": plan.min_output_amount.to_string(),
-                "routePlan": self.decode_route_plan(&plan.route_plan)?,
-            },
-            "userPublicKey": plan.bucket_pubkey.to_string(),
-            "wrapAndUnwrapSol": true,
-            "feeAccount": plan.bucket_pubkey.to_string(),
-            "computeUnitPriceMicroLamports": plan.priority_fee,
-            "prioritizationFeeLamports": plan.priority_fee,
-        });
-
-        let response_result = timeout(
-            Duration::from_millis(10000), // 10 second timeout
-            self.http_client
-                .post(&format!("{}/swap-instructions", JUPITER_SWAP_API))
-                .json(&swap_request)
-                .send()
-        ).await;
-
-        let response = match response_result {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(e)) => return Err(AgentError::Network(e)),
-            Err(_) => return Err(AgentError::TransactionFailed("Jupiter API timeout".to_string())),
-        };
-
-        if !response.status().is_success() {
-            let err_msg = format!("Swap instructions failed: HTTP {}", response.status());
-            return Err(AgentError::JupiterApi(err_msg));
-        }
-
-        let instructions: Value = match response.json().await {
-            Ok(val) => val,
-            Err(e) => return Err(AgentError::Network(e)),
-        };
-        Ok(instructions)
+        // Function removed - using direct Raydium integration instead
+        Err(AgentError::Configuration("Jupiter integration removed - using Raydium".to_string()))
     }
 
-    /// Decode route plan from binary format
+    /// Decode route plan from binary format (DEPRECATED - moved to Raydium)
     fn decode_route_plan(&self, encoded: &[u8]) -> StdResult<Value, AgentError> {
-        // Decode the route plan that was encoded by the strategy
-        let route_plan: Vec<crate::agent::types::RoutePlan> = bincode::deserialize(encoded)
-            .map_err(|e| AgentError::Configuration(format!("Failed to decode route plan: {}", e)))?;
-
-        // Convert to Jupiter API format
-        let jupiter_format = route_plan.iter().map(|rp| {
-            json!({
-                "swapInfo": {
-                    "ammKey": rp.swap_info.amm_key,
-                    "label": rp.swap_info.label,
-                    "inputMint": rp.swap_info.input_mint,
-                    "outputMint": rp.swap_info.output_mint,
-                    "inAmount": rp.swap_info.in_amount,
-                    "outAmount": rp.swap_info.out_amount,
-                    "feeAmount": rp.swap_info.fee_amount,
-                    "feeMint": rp.swap_info.fee_mint,
-                },
-                "percent": rp.percent
-            })
-        }).collect::<Vec<_>>();
-
-        Ok(json!(jupiter_format))
+        // Function removed - Raydium uses different routing mechanism
+        Err(AgentError::Configuration("Jupiter route plan deprecated - using Raydium".to_string()))
     }
+    */
 
     /// Update execution metrics
     async fn update_metrics(&self, result: &ExecutionResult) {

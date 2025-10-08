@@ -430,7 +430,7 @@ pub async fn create_bucket(
         Ok(response) => {
             // Save pool information to database after successful blockchain transaction
             let creator_pubkey = keypair.pubkey().to_string();
-            let trading_end_time = chrono::Utc::now() + chrono::Duration::days(request.trading_window_days as i64);
+            let trading_end_time = chrono::Utc::now() + chrono::Duration::minutes((request.trading_window_days * 24 * 60) as i64);
             
             tracing::debug!("[create_bucket] Saving pool to database - creator: {}, name: {}, strategy: {}", 
                 creator_pubkey, request.name, request.strategy);
@@ -580,25 +580,53 @@ pub async fn start_trading(
         },
     };
 
+    // Get OpenAI API key from environment
+    let openai_api_key = std::env::var("OPENAI_API_KEY")
+        .unwrap_or_else(|_| {
+            tracing::warn!("[start_trading] OPENAI_API_KEY not set, using default");
+            "sk-proj-default".to_string()
+        });
+
+    // Call the actual start_trading_transaction to create the blockchain transaction
+    tracing::info!("[start_trading] Calling start_trading_transaction to create blockchain transaction");
+    let tx_response = match state.icm_client.start_trading_transaction(request.clone(), keypair).await {
+        Ok(response) => {
+            tracing::info!("[start_trading] Blockchain transaction created successfully: {}", response.transaction);
+            response
+        },
+        Err(e) => {
+            tracing::error!("[start_trading] Failed to create blockchain transaction: {}", e);
+            let error_response = ApiResponse::<UnsignedTransactionResponse>::error(format!("Failed to create blockchain transaction: {}", e));
+            return ResponseJson(error_response);
+        }
+    };
+
     let agent_config = crate::agent::trading_agent::TradingAgentConfigBuilder::new()
+        .with_openai_api_key(openai_api_key)
         .with_token_pairs(token_pairs)
         .with_strategy_configs(vec![strategy_config])
         .with_portfolio_id(uuid::Uuid::parse_str(&pool_id).unwrap())
         .build();
-    if let Ok(config) = agent_config {
-        let icm_client = state.icm_client.clone();
-        let db_pool = state.db.pool().clone();
-        tokio::spawn(async move {
-            let _ = crate::agent::trading_agent::TradingAgent::new(config, icm_client, db_pool).await;
-        });
-    } else {
-        tracing::error!("[start_trading] Invalid agent config");
+    match agent_config {
+        Ok(config) => {
+            let icm_client = state.icm_client.clone();
+            let db_pool = state.db.pool().clone();
+            tokio::spawn(async move {
+                match crate::agent::trading_agent::TradingAgent::new(config, icm_client, db_pool).await {
+                    Ok(agent) => {
+                        tracing::info!("[start_trading] Trading agent created successfully");
+                    },
+                    Err(e) => {
+                        tracing::error!("[start_trading] Failed to create trading agent: {}", e);
+                    }
+                }
+            });
+        },
+        Err(e) => {
+            tracing::error!("[start_trading] Invalid agent config: {}", e);
+        }
     }
 
-    let tx_response = UnsignedTransactionResponse {
-        transaction: pool_id.clone(),
-        message: format!("Trading pool created and agent started: {}", pool_id),
-    };
     ResponseJson(ApiResponse::success(tx_response))
 }
 
@@ -626,56 +654,43 @@ pub async fn swap_tokens(
         in_amount: request.in_amount,
         quoted_out_amount: request.quoted_out_amount,
         slippage_bps: request.slippage_bps,
-        platform_fee_bps: request.platform_fee_bps,
-        route_plan: request.route_plan.clone(),
+        amm: request.amm.clone(),
+        amm_authority: request.amm_authority.clone(),
+        pool_coin_token_account: request.pool_coin_token_account.clone(),
+        pool_pc_token_account: request.pool_pc_token_account.clone(),
     };
-    // You may need to parse/lookup these pubkeys as needed for your deployment
+    // Parse required pubkeys
     let bucket_name = &request.bucket;
     let input_mint = Pubkey::from_str(&request.input_mint).unwrap();
     let output_mint = Pubkey::from_str(&request.output_mint).unwrap();
 
-    // Fetch input_mint_program and output_mint_program from the database using the input/output mint addresses
-    let pool = state.db.pool();
-    let client = match pool.get().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[swap_tokens] DB connection error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-    // Query for mint program addresses
-    let row = match client.query_opt(
-        "SELECT input_mint_program, output_mint_program FROM token_mint_programs WHERE input_mint = $1 AND output_mint = $2",
-        &[&request.input_mint, &request.output_mint],
-    ).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("[swap_tokens] DB query error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB query error".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-    let (input_mint_program, output_mint_program) = match row {
-        Some(row) => {
-            let inp: String = row.try_get("input_mint_program").unwrap_or_default();
-            let outp: String = row.try_get("output_mint_program").unwrap_or_default();
-            (
-                Pubkey::from_str(&inp).expect("Invalid input_mint_program from DB"),
-                Pubkey::from_str(&outp).expect("Invalid output_mint_program from DB"),
-            )
-        },
-        None => {
-            tracing::error!("[swap_tokens] No mint program mapping found in DB");
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("No mint program mapping found in DB".to_string());
-            return ResponseJson(error_response);
-        }
-    };
+    // Get Raydium AMM parameters from environment or request
+    let raydium_amm_program = Pubkey::from_str(&std::env::var("RAYDIUM_AMM_PROGRAM").unwrap_or_else(|_| "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8".to_string())).expect("Invalid RAYDIUM_AMM_PROGRAM");
+    
+    // Parse AMM accounts from request or use defaults/environment
+    let amm = request.amm.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid AMM address"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_AMM").unwrap_or_default()).expect("Invalid DEFAULT_AMM"));
+    
+    let amm_authority = request.amm_authority.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid AMM authority"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_AMM_AUTHORITY").unwrap_or_default()).expect("Invalid DEFAULT_AMM_AUTHORITY"));
+    
+    let pool_coin_token_account = request.pool_coin_token_account.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid pool coin token account"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_POOL_COIN_TOKEN_ACCOUNT").unwrap_or_default()).expect("Invalid DEFAULT_POOL_COIN_TOKEN_ACCOUNT"));
+    
+    let pool_pc_token_account = request.pool_pc_token_account.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid pool pc token account"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_POOL_PC_TOKEN_ACCOUNT").unwrap_or_default()).expect("Invalid DEFAULT_POOL_PC_TOKEN_ACCOUNT"));
 
-    let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
-    let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
-    // For token_2022_program, use the constant from spl_token
-    let token_2022_program = TOKEN_2022_PROGRAM_ID;
+    // For user_authority, use the bucket authority (derived from bucket)
+    let creator = keypair.pubkey();
+    let (bucket_pda, _) = Pubkey::find_program_address(
+        &[b"bucket", bucket_name.as_bytes(), creator.as_ref()],
+        &crate::onchain_instance::instance::ICM_PROGRAM_ID,
+    );
+    let user_authority = bucket_pda; // The bucket PDA acts as the user authority
 
     match state.icm_client.agent_swap_tokens_transaction(
         instance_request,
@@ -683,11 +698,12 @@ pub async fn swap_tokens(
         bucket_name,
         input_mint,
         output_mint,
-        jupiter_program,
-        token_2022_program,
-        platform_fee_account,
-        input_mint_program,
-        output_mint_program,
+        raydium_amm_program,
+        amm,
+        amm_authority,
+        pool_coin_token_account,
+        pool_pc_token_account,
+        user_authority,
     ).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {
@@ -722,57 +738,43 @@ pub async fn agent_swap_tokens(
         in_amount: request.in_amount,
         quoted_out_amount: request.quoted_out_amount,
         slippage_bps: request.slippage_bps,
-        platform_fee_bps: request.platform_fee_bps,
-        route_plan: request.route_plan.clone(),
+        amm: request.amm.clone(),
+        amm_authority: request.amm_authority.clone(),
+        pool_coin_token_account: request.pool_coin_token_account.clone(),
+        pool_pc_token_account: request.pool_pc_token_account.clone(),
     };
-    // You may need to parse/lookup these pubkeys as needed for your deployment
+    // Parse required pubkeys
     let bucket_name = &request.bucket;
     let input_mint = Pubkey::from_str(&request.input_mint).unwrap();
     let output_mint = Pubkey::from_str(&request.output_mint).unwrap();
 
-    // Fetch input_mint_program and output_mint_program from the database using the input/output mint addresses
-    let pool = state.db.pool();
-    let client = match pool.get().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("[agent_swap_tokens] DB connection error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB connection error".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-    // Query for mint program addresses
-    let row = match client.query_opt(
-        "SELECT input_mint_program, output_mint_program FROM token_mint_programs WHERE input_mint = $1 AND output_mint = $2",
-        &[&request.input_mint, &request.output_mint],
-    ).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("[agent_swap_tokens] DB query error: {}", e);
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("DB query error".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-    let (input_mint_program, output_mint_program) = match row {
-        Some(row) => {
-            let inp: String = row.try_get("input_mint_program").unwrap_or_default();
-            let outp: String = row.try_get("output_mint_program").unwrap_or_default();
-            (
-                Pubkey::from_str(&inp).expect("Invalid input_mint_program from DB"),
-                Pubkey::from_str(&outp).expect("Invalid output_mint_program from DB"),
-            )
-        },
-        None => {
-            tracing::error!("[agent_swap_tokens] No mint program mapping found in DB");
-            let error_response = ApiResponse::<UnsignedTransactionResponse>::error("No mint program mapping found in DB".to_string());
-            return ResponseJson(error_response);
-        }
-    };
-
+    // Get Raydium AMM parameters from environment or request
+    let raydium_amm_program = Pubkey::from_str(&std::env::var("RAYDIUM_AMM_PROGRAM").unwrap_or_else(|_| "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8".to_string())).expect("Invalid RAYDIUM_AMM_PROGRAM");
     
-    let jupiter_program = Pubkey::from_str(&std::env::var("JUPITER_PROGRAM_PUBKEY").expect("JUPITER_PROGRAM_PUBKEY env var required")).expect("Invalid JUPITER_PROGRAM_PUBKEY");
-    let platform_fee_account = Pubkey::from_str(&std::env::var("PLATFORM_FEE_ACCOUNT").expect("PLATFORM_FEE_ACCOUNT env var required")).expect("Invalid PLATFORM_FEE_ACCOUNT");
-    // For token_2022_program, use the constant from spl_token_2022
-    let token_2022_program = TOKEN_2022_PROGRAM_ID;
+    // Parse AMM accounts from request or use defaults/environment
+    let amm = request.amm.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid AMM address"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_AMM").unwrap_or_default()).expect("Invalid DEFAULT_AMM"));
+    
+    let amm_authority = request.amm_authority.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid AMM authority"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_AMM_AUTHORITY").unwrap_or_default()).expect("Invalid DEFAULT_AMM_AUTHORITY"));
+    
+    let pool_coin_token_account = request.pool_coin_token_account.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid pool coin token account"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_POOL_COIN_TOKEN_ACCOUNT").unwrap_or_default()).expect("Invalid DEFAULT_POOL_COIN_TOKEN_ACCOUNT"));
+    
+    let pool_pc_token_account = request.pool_pc_token_account.as_ref()
+        .map(|s| Pubkey::from_str(s).expect("Invalid pool pc token account"))
+        .unwrap_or_else(|| Pubkey::from_str(&std::env::var("DEFAULT_POOL_PC_TOKEN_ACCOUNT").unwrap_or_default()).expect("Invalid DEFAULT_POOL_PC_TOKEN_ACCOUNT"));
+
+    // For user_authority, use the bucket authority (derived from bucket)
+    let creator = keypair.pubkey();
+    let (bucket_pda, _) = Pubkey::find_program_address(
+        &[b"bucket", bucket_name.as_bytes(), creator.as_ref()],
+        &crate::onchain_instance::instance::ICM_PROGRAM_ID,
+    );
+    let user_authority = bucket_pda; // The bucket PDA acts as the user authority
 
     match state.icm_client.agent_swap_tokens_transaction(
         instance_request,
@@ -780,11 +782,12 @@ pub async fn agent_swap_tokens(
         bucket_name,
         input_mint,
         output_mint,
-        jupiter_program,
-        token_2022_program,
-        platform_fee_account,
-        input_mint_program,
-        output_mint_program,
+        raydium_amm_program,
+        amm,
+        amm_authority,
+        pool_coin_token_account,
+        pool_pc_token_account,
+        user_authority,
     ).await {
         Ok(response) => ResponseJson(ApiResponse::success(response)),
         Err(e) => {

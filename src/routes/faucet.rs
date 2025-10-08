@@ -24,8 +24,8 @@ pub struct FaucetResponse {
     pub tx_signature: Option<String>,
 }
 
-const USDC_MINT: &str = "7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF";
-const MAX_FAUCET_AMOUNT: u64 = 100_000_000_000; // 100 USDC (9 decimals)
+const USDC_MINT: &str = "2DvLSRWNhQpHU4yDzZVTr8VstbHXv4hdkDGDG4EKuhMkuYgPfBD8Ffk2N1CuZXK6a2MEJLAK7wsc92V2smdD1BX";
+const MAX_FAUCET_AMOUNT: u64 = 100_000_000; // 100 USDC (9 decimals)
 const FAUCET_INTERVAL_SECS: u64 = 3 * 60 * 60; // 3 hours
 
 
