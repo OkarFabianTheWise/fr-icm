@@ -71,9 +71,9 @@ pub struct UnsignedTransactionResponse {
 pub struct CreateBucketRequest {
     pub name: String,
     pub token_mints: Vec<String>, // base58 pubkeys
-    // Accept days from frontend for user-friendly input, convert to minutes in backend
-    pub contribution_window_days: u32,
-    pub trading_window_days: u32,
+    // Accept minutes directly from frontend to match smart contract expectations
+    pub contribution_window_minutes: u32,
+    pub trading_window_minutes: u32,
     pub creator_fee_percent: u16,
     pub target_amount: u64,
     pub min_contribution: u64,

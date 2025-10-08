@@ -417,8 +417,8 @@ pub async fn create_bucket(
     let instance_request = CreateBucketRequest {
         name: request.name.clone(),
         token_mints: request.token_mints.clone(),
-        contribution_window_days: request.contribution_window_days,
-        trading_window_days: request.trading_window_days,
+        contribution_window_minutes: request.contribution_window_minutes,
+        trading_window_minutes: request.trading_window_minutes,
         creator_fee_percent: request.creator_fee_percent,
         target_amount: request.target_amount,
         min_contribution: request.min_contribution,
@@ -430,7 +430,7 @@ pub async fn create_bucket(
         Ok(response) => {
             // Save pool information to database after successful blockchain transaction
             let creator_pubkey = keypair.pubkey().to_string();
-            let trading_end_time = chrono::Utc::now() + chrono::Duration::minutes((request.trading_window_days * 24 * 60) as i64);
+            let trading_end_time = chrono::Utc::now() + chrono::Duration::minutes(request.trading_window_minutes as i64);
             
             tracing::debug!("[create_bucket] Saving pool to database - creator: {}, name: {}, strategy: {}", 
                 creator_pubkey, request.name, request.strategy);

@@ -35,6 +35,7 @@ pub struct IcmProgramInstance {
 impl IcmProgramInstance {
     /// Create a new instance of the ICM program client
     pub fn new(cluster: Cluster, payer: Keypair) -> Result<Self> {
+        println!("ICM Program ID: {}", ICM_PROGRAM_ID);
         Ok(Self {
             cluster,
             payer_pubkey: payer.pubkey(),
@@ -307,8 +308,8 @@ impl IcmProgramInstance {
             .args(CreateBucket {
                 name: request.name.clone(),
                 token_mints: token_mints.clone(),
-                contribution_window_minutes: request.contribution_window_days * 24 * 60, // Convert days to minutes
-                trading_window_minutes: request.trading_window_days * 24 * 60,           // Convert days to minutes
+                contribution_window_minutes: request.contribution_window_minutes, // Use minutes directly
+                trading_window_minutes: request.trading_window_minutes,           // Use minutes directly
                 creator_fee_percent: request.creator_fee_percent,
                 target_amount: request.target_amount,
                 min_contribution: request.min_contribution,

@@ -1,5 +1,5 @@
 {
-  "address": "89Xaqsx3Y5ttaFvRYYYaKpmhwnYZ9AKmn3NepraLPX5U",
+  "address": "FjAe8aANoma5MNo6JFQxYBtxdu8k2q2i5M9UwUBMAJBW",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -1798,12 +1798,12 @@
     {
       "code": 6004,
       "name": "InvalidContributionWindow",
-      "msg": "Invalid contribution window (1-30 days)"
+      "msg": "Invalid contribution window (1 minute to 30 days)"
     },
     {
       "code": 6005,
       "name": "InvalidTradingWindow",
-      "msg": "Invalid trading window (1-180 days)"
+      "msg": "Invalid trading window (1 minute to 180 days)"
     },
     {
       "code": 6006,
