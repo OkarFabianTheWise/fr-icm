@@ -11,8 +11,83 @@ use anchor_lang::declare_program;
 use chrono::{DateTime, Utc, Duration};
 use uuid;
 
-use crate::state_structs::{CreateBucketRequest,
-UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ContributeToBucketRequest, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
+use crate::state_structs::{CreateBucketApiRequest, CreateBucketRequest, ContributeToBucketApiRequest, ContributeToBucketRequest,
+UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
+
+/// Convert human-readable USDC amount to lamports (multiply by 1e6)
+fn usdc_to_lamports(usdc_amount: f64) -> u64 {
+    (usdc_amount * 1_000_000.0) as u64
+}
+
+/// Convert lamports to human-readable USDC amount (divide by 1e6)
+fn lamports_to_usdc(lamports: u64) -> f64 {
+    lamports as f64 / 1_000_000.0
+}
+
+/// Format seconds into a human-readable time string
+fn format_time_remaining(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "Ended".to_string();
+    }
+    
+    let days = seconds / (24 * 3600);
+    let hours = (seconds % (24 * 3600)) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{}d", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}h", hours));
+    }
+    if minutes > 0 || parts.is_empty() {
+        parts.push(format!("{}m", minutes));
+    }
+    
+    parts.join(" ")
+}
+
+/// Calculate actual pool status and time remaining based on current time and deadlines
+fn calculate_pool_status_and_time(
+    stored_phase: &str,
+    fundraising_deadline: i64,
+    trading_start_time: Option<i64>,
+    trading_end_time: Option<i64>,
+    current_time: i64
+) -> (String, Option<String>) {
+    match stored_phase {
+        "Raising" => {
+            if current_time < fundraising_deadline {
+                // Still in fundraising period
+                let time_left = fundraising_deadline - current_time;
+                ("Raising".to_string(), Some(format_time_remaining(time_left)))
+            } else {
+                // Fundraising deadline passed but start_trading not called yet
+                ("Expired".to_string(), Some("Ended".to_string()))
+            }
+        },
+        "Trading" => {
+            if let Some(end_time) = trading_end_time {
+                if current_time < end_time {
+                    // Still in trading period
+                    let time_left = end_time - current_time;
+                    ("Trading".to_string(), Some(format_time_remaining(time_left)))
+                } else {
+                    // Trading period ended
+                    ("Closed".to_string(), Some("Ended".to_string()))
+                }
+            } else {
+                // Trading started but no end time set
+                ("Trading".to_string(), None)
+            }
+        },
+        _ => {
+            // Closed, Failed, etc.
+            (stored_phase.to_string(), Some("Ended".to_string()))
+        }
+    }
+}
 
 use std::convert::TryFrom;
 use std::str::FromStr;
@@ -42,6 +117,7 @@ impl From<icm_program::accounts::TradingPool> for TradingPool {
             raised_amount: None,
             contribution_percent: None,
             strategy: None,
+            time_remaining: None,
         }
     }
 }
@@ -142,11 +218,13 @@ pub async fn get_trading_pool(
         Ok(pool) => {
             // Calculate contribution_percent if raised_amount is provided
             let (contribution_percent, raised_amount_str) = if let Some(raised) = raised_amount {
-                // Both raised and target_amount are strings, try to parse as f64
-                let raised_f = raised.parse::<f64>().unwrap_or(0.0);
-                let target_f = pool.target_amount.parse::<f64>().unwrap_or(0.0);
-                let percent = if target_f > 0.0 { (raised_f / target_f) * 100.0 } else { 0.0 };
-                (Some(percent), Some(raised))
+                // Convert lamports to USDC for display and calculation
+                let raised_lamports = raised.parse::<u64>().unwrap_or(0);
+                let target_lamports = pool.target_amount.parse::<u64>().unwrap_or(0);
+                let raised_usdc = lamports_to_usdc(raised_lamports);
+                let target_usdc = lamports_to_usdc(target_lamports);
+                let percent = if target_usdc > 0.0 { (raised_usdc / target_usdc) * 100.0 } else { 0.0 };
+                (Some(percent), Some(format!("{:.2}", raised_usdc)))
             } else {
                 (None, None)
             };
@@ -168,44 +246,28 @@ pub async fn get_trading_pool(
                 }
             };
 
-            // Calculate actual pool status based on current time and deadlines
+            // Calculate actual pool status and time remaining based on current time and deadlines
             let current_time = chrono::Utc::now().timestamp();
             let fundraising_deadline = pool.fundraising_deadline.parse::<i64>().unwrap_or(0);
             let trading_start = pool.trading_start_time.as_ref().and_then(|t| t.parse::<i64>().ok());
             let trading_end = pool.trading_end_time.as_ref().and_then(|t| t.parse::<i64>().ok());
             
-            let computed_phase = match pool.phase.as_str() {
-                "Raising" => {
-                    if current_time < fundraising_deadline {
-                        "Raising".to_string()
-                    } else if trading_start.is_some() {
-                        "Trading".to_string()
-                    } else {
-                        "Closed".to_string()
-                    }
-                },
-                "Trading" => {
-                    if let Some(end_time) = trading_end {
-                        if current_time < end_time {
-                            "Trading".to_string()
-                        } else {
-                            "Closed".to_string()
-                        }
-                    } else {
-                        "Trading".to_string()
-                    }
-                },
-                _ => pool.phase.clone(),
-            };
+            let (computed_phase, time_remaining) = calculate_pool_status_and_time(
+                &pool.phase,
+                fundraising_deadline,
+                trading_start,
+                trading_end,
+                current_time
+            );
 
             let mapped = TradingPool {
                 pool_id: pool.pool_id,
                 pool_bump: pool.pool_bump,
                 creator: pool.creator,
                 token_bucket: pool.token_bucket,
-                target_amount: pool.target_amount,
-                min_contribution: pool.min_contribution,
-                max_contribution: pool.max_contribution,
+                target_amount: format!("{:.2}", lamports_to_usdc(pool.target_amount.parse::<u64>().unwrap_or(0))),
+                min_contribution: format!("{:.2}", lamports_to_usdc(pool.min_contribution.parse::<u64>().unwrap_or(0))),
+                max_contribution: format!("{:.2}", lamports_to_usdc(pool.max_contribution.parse::<u64>().unwrap_or(0))),
                 trading_duration: pool.trading_duration,
                 created_at: pool.created_at,
                 fundraising_deadline: pool.fundraising_deadline,
@@ -216,6 +278,7 @@ pub async fn get_trading_pool(
                 raised_amount: raised_amount_str,
                 contribution_percent,
                 strategy,
+                time_remaining, // Include calculated time remaining
             };
             ResponseJson(ApiResponse::success(mapped))
         },
@@ -273,10 +336,13 @@ pub async fn get_trading_pool_info(
         Ok(pool_info) => {
             // Calculate contribution_percent if raised_amount is provided
             let (contribution_percent, raised_amount_str) = if let Some(raised) = query.raised_amount.clone() {
-                let raised_f = raised.parse::<f64>().unwrap_or(0.0);
-                let target_f = pool_info.target_amount.parse::<f64>().unwrap_or(0.0);
-                let percent = if target_f > 0.0 { (raised_f / target_f) * 100.0 } else { 0.0 };
-                (Some(percent), Some(raised))
+                // Convert lamports to USDC for display and calculation
+                let raised_lamports = raised.parse::<u64>().unwrap_or(0);
+                let target_lamports = pool_info.target_amount.parse::<u64>().unwrap_or(0);
+                let raised_usdc = lamports_to_usdc(raised_lamports);
+                let target_usdc = lamports_to_usdc(target_lamports);
+                let percent = if target_usdc > 0.0 { (raised_usdc / target_usdc) * 100.0 } else { 0.0 };
+                (Some(percent), Some(format!("{:.2}", raised_usdc)))
             } else {
                 (None, None)
             };
@@ -298,44 +364,28 @@ pub async fn get_trading_pool_info(
                 }
             };
 
-            // Calculate actual pool status based on current time and deadlines
+            // Calculate actual pool status and time remaining based on current time and deadlines
             let current_time = chrono::Utc::now().timestamp();
             let fundraising_deadline = pool_info.fundraising_deadline.parse::<i64>().unwrap_or(0);
             let trading_start = pool_info.trading_start_time.as_ref().and_then(|t| t.parse::<i64>().ok());
             let trading_end = pool_info.trading_end_time.as_ref().and_then(|t| t.parse::<i64>().ok());
             
-            let computed_phase = match pool_info.phase.as_str() {
-                "Raising" => {
-                    if current_time < fundraising_deadline {
-                        "Raising".to_string()
-                    } else if trading_start.is_some() {
-                        "Trading".to_string()
-                    } else {
-                        "Closed".to_string()
-                    }
-                },
-                "Trading" => {
-                    if let Some(end_time) = trading_end {
-                        if current_time < end_time {
-                            "Trading".to_string()
-                        } else {
-                            "Closed".to_string()
-                        }
-                    } else {
-                        "Trading".to_string()
-                    }
-                },
-                _ => pool_info.phase.clone(),
-            };
+            let (computed_phase, time_remaining) = calculate_pool_status_and_time(
+                &pool_info.phase,
+                fundraising_deadline,
+                trading_start,
+                trading_end,
+                current_time
+            );
 
             let mapped = TradingPool {
                 pool_id: pool_info.pool_id,
                 pool_bump: pool_info.pool_bump,
                 creator: pool_info.creator,
                 token_bucket: pool_info.token_bucket,
-                target_amount: pool_info.target_amount,
-                min_contribution: pool_info.min_contribution,
-                max_contribution: pool_info.max_contribution,
+                target_amount: format!("{:.2}", lamports_to_usdc(pool_info.target_amount.parse::<u64>().unwrap_or(0))),
+                min_contribution: format!("{:.2}", lamports_to_usdc(pool_info.min_contribution.parse::<u64>().unwrap_or(0))),
+                max_contribution: format!("{:.2}", lamports_to_usdc(pool_info.max_contribution.parse::<u64>().unwrap_or(0))),
                 trading_duration: pool_info.trading_duration,
                 created_at: pool_info.created_at,
                 fundraising_deadline: pool_info.fundraising_deadline,
@@ -346,6 +396,7 @@ pub async fn get_trading_pool_info(
                 raised_amount: raised_amount_str,
                 contribution_percent,
                 strategy,
+                time_remaining, // Include calculated time remaining
             };
             ResponseJson(ApiResponse::success(mapped))
         },
@@ -361,7 +412,7 @@ pub async fn get_trading_pool_info(
 pub async fn create_bucket(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
-    Json(request): Json<CreateBucketRequest>
+    Json(request): Json<CreateBucketApiRequest>
 ) -> impl IntoResponse {
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
@@ -413,16 +464,16 @@ pub async fn create_bucket(
         }
     }
 
-    // Convert to instance::CreateBucketRequest
+    // Convert to instance::CreateBucketRequest (convert human-readable USDC to lamports)
     let instance_request = CreateBucketRequest {
         name: request.name.clone(),
         token_mints: request.token_mints.clone(),
         contribution_window_minutes: request.contribution_window_minutes,
         trading_window_minutes: request.trading_window_minutes,
         creator_fee_percent: request.creator_fee_percent,
-        target_amount: request.target_amount,
-        min_contribution: request.min_contribution,
-        max_contribution: request.max_contribution,
+        target_amount: usdc_to_lamports(request.target_amount),
+        min_contribution: usdc_to_lamports(request.min_contribution),
+        max_contribution: usdc_to_lamports(request.max_contribution),
         management_fee: request.management_fee,
         strategy: request.strategy.clone(),
     };
@@ -441,7 +492,7 @@ pub async fn create_bucket(
                 &request.name,
                 &request.strategy,
                 request.token_mints.clone(),
-                request.target_amount as i64,
+                usdc_to_lamports(request.target_amount) as i64,
                 trading_end_time,
                 request.management_fee as i32,
             ).await {
@@ -466,7 +517,7 @@ pub async fn create_bucket(
 pub async fn contribute_to_bucket(
     State(state): State<AppState>,
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
-    Json(request): Json<ContributeToBucketRequest>
+    Json(request): Json<ContributeToBucketApiRequest>
 ) -> impl IntoResponse {
     // Get user keypair
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
@@ -477,10 +528,10 @@ pub async fn contribute_to_bucket(
             return ResponseJson(error_response);
         }
     };
-    // Convert to instance::ContributeToBucketRequest
+    // Convert to instance::ContributeToBucketRequest (convert human-readable USDC to lamports)
     let instance_request = ContributeToBucketRequest {
         bucket_name: request.bucket_name,
-        amount: request.amount,
+        amount: usdc_to_lamports(request.amount),
         creator_pubkey: request.creator_pubkey.clone(),
     };
     match state.icm_client.contribute_to_bucket_transaction(instance_request, keypair).await {

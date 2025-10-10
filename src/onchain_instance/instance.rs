@@ -26,6 +26,64 @@ use icm_program::client::accounts::{CreateBucket as CreateBucketAccount, Contrib
 pub use crate::state_structs::{TradingPool, CreatorProfile, BucketAccount, BucketInfo};
 use crate::state_structs::{CreateBucketRequest, ContributeToBucketRequest, StartTradingRequest, SwapTokensRequest, ClaimRewardsRequest, CloseBucketRequest, UnsignedTransactionResponse, GetCreatorProfileQuery, GetBucketQuery};
 
+/// Format seconds into a human-readable time string
+fn format_time_remaining(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "Ended".to_string();
+    }
+    
+    let days = seconds / (24 * 3600);
+    let hours = (seconds % (24 * 3600)) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!("{}d", days));
+    }
+    if hours > 0 {
+        parts.push(format!("{}h", hours));
+    }
+    if minutes > 0 || parts.is_empty() {
+        parts.push(format!("{}m", minutes));
+    }
+    
+    parts.join(" ")
+}
+
+/// Convert lamports to human-readable USDC amount (divide by 1e6)
+fn lamports_to_usdc(lamports: u64) -> f64 {
+    lamports as f64 / 1_000_000.0
+}
+
+/// Calculate time remaining for a pool based on its status and current time
+fn calculate_time_remaining_for_bucket(
+    status: &str,
+    contribution_deadline: i64,
+    trading_deadline: i64,
+    trading_started_at: i64,
+    current_time: i64
+) -> Option<String> {
+    match status {
+        "Raising" => {
+            if current_time < contribution_deadline {
+                let time_left = contribution_deadline - current_time;
+                Some(format_time_remaining(time_left))
+            } else {
+                Some("Ended".to_string())
+            }
+        },
+        "Trading" => {
+            if trading_started_at > 0 && current_time < trading_deadline {
+                let time_left = trading_deadline - current_time;
+                Some(format_time_remaining(time_left))
+            } else {
+                Some("Ended".to_string())
+            }
+        },
+        _ => Some("Ended".to_string())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IcmProgramInstance {
     pub cluster: Cluster,
@@ -550,6 +608,7 @@ impl IcmProgramInstance {
             raised_amount: None,
             contribution_percent: None,
             strategy: None,
+            time_remaining: None,
         })
     }
 
@@ -604,6 +663,21 @@ impl IcmProgramInstance {
                 let strategy_key = format!("{}_{}", creator, name);
                 let strategy = strategies.get(&strategy_key).cloned();
                 
+                // Calculate time remaining
+                let current_time = chrono::Utc::now().timestamp();
+                let contribution_deadline = anchor_bucket.contribution_deadline;
+                let trading_deadline = anchor_bucket.trading_deadline;
+                let trading_started_at = anchor_bucket.trading_started_at;
+                let status = format!("{:?}", anchor_bucket.status);
+                
+                let time_remaining = calculate_time_remaining_for_bucket(
+                    &status,
+                    contribution_deadline,
+                    trading_deadline,
+                    trading_started_at,
+                    current_time
+                );
+                
                 BucketInfo {
                     public_key: pubkey.to_string(),
                     account: BucketAccount {
@@ -613,15 +687,16 @@ impl IcmProgramInstance {
                         contribution_deadline: anchor_bucket.contribution_deadline.to_string(),
                         trading_deadline: anchor_bucket.trading_deadline.to_string(),
                         creator_fee_percent: anchor_bucket.creator_fee_percent,
-                        status: format!("{:?}", anchor_bucket.status),
+                        status,
                         trading_started_at: anchor_bucket.trading_started_at.to_string(),
                         closed_at: anchor_bucket.closed_at.to_string(),
                         bump: anchor_bucket.bump,
                         creator_profile: anchor_bucket.creator_profile,
                         performance_fee: anchor_bucket.performance_fee,
-                        raised_amount: anchor_bucket.raised_amount,
+                        raised_amount: lamports_to_usdc(anchor_bucket.raised_amount),
                         contributor_count: anchor_bucket.contributor_count,
                         strategy,
+                        time_remaining,
                     },
                 }
             })

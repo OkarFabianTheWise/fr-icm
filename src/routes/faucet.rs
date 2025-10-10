@@ -14,7 +14,7 @@ use std::{
 
 #[derive(Deserialize)]
 pub struct FaucetRequest {
-    pub amount: u64, // in USDC decimals (assume 6)
+    pub amount: f64, // Human-readable USDC amount
 }
 
 #[derive(Serialize)]
@@ -25,8 +25,13 @@ pub struct FaucetResponse {
 }
 
 const USDC_MINT: &str = "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg";
-const MAX_FAUCET_AMOUNT: u64 = 100_000_000; // 100 USDC (9 decimals)
+const MAX_FAUCET_AMOUNT: f64 = 100.0; // 100 USDC (human-readable)
 const FAUCET_INTERVAL_SECS: u64 = 3 * 60 * 60; // 3 hours
+
+/// Convert human-readable USDC amount to lamports (multiply by 1e6)
+fn usdc_to_lamports(usdc_amount: f64) -> u64 {
+    (usdc_amount * 1_000_000.0) as u64
+}
 
 
 #[axum::debug_handler]
@@ -94,7 +99,7 @@ pub async fn claim_faucet(
     if req.amount > MAX_FAUCET_AMOUNT {
         return Json(FaucetResponse {
             success: false,
-            message: format!("Max faucet amount is 10 USDC"),
+            message: format!("Max faucet amount is {} USDC", MAX_FAUCET_AMOUNT),
             tx_signature: None,
         }).into_response();
     }
@@ -170,7 +175,7 @@ pub async fn claim_faucet(
         &user_ata,
         &faucet_keypair.pubkey(),
         &[],
-        req.amount,
+        usdc_to_lamports(req.amount),
     ).unwrap();
     instructions.push(usdc_ix);
 
