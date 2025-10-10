@@ -22,6 +22,7 @@ pub struct TradingPool {
     pub raised_amount: Option<String>,
     pub contribution_percent: Option<f64>,
     pub strategy: Option<String>,
+    pub time_remaining: Option<String>, // Formatted time remaining (e.g., "2d 5h 30m")
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -48,9 +49,10 @@ pub struct BucketAccount {
     pub bump: u8,
     pub creator_profile: Pubkey, // base58 pubkey
     pub performance_fee: u16,
-    pub raised_amount: u64,
+    pub raised_amount: f64, // Human-readable USDC amount
     pub contributor_count: u32,
     pub strategy: Option<String>, // Trading strategy from database
+    pub time_remaining: Option<String>, // Formatted time remaining (e.g., "2d 5h 30m")
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -67,6 +69,25 @@ pub struct UnsignedTransactionResponse {
 
 
 // --- Request structs ---
+
+// API layer request (accepts human-readable USDC amounts)
+#[derive(Deserialize)]
+pub struct CreateBucketApiRequest {
+    pub name: String,
+    pub token_mints: Vec<String>, // base58 pubkeys
+    // Accept minutes directly from frontend to match smart contract expectations
+    pub contribution_window_minutes: u32,
+    pub trading_window_minutes: u32,
+    pub creator_fee_percent: u16,
+    // Accept human-readable USDC amounts (e.g., 100.0, 20.0) - backend will convert to lamports
+    pub target_amount: f64,
+    pub min_contribution: f64,
+    pub max_contribution: f64,
+    pub management_fee: u16,
+    pub strategy: String, // Trading strategy for the pool
+}
+
+// Instance layer request (uses lamports as u64)
 #[derive(Deserialize)]
 pub struct CreateBucketRequest {
     pub name: String,
@@ -75,17 +96,27 @@ pub struct CreateBucketRequest {
     pub contribution_window_minutes: u32,
     pub trading_window_minutes: u32,
     pub creator_fee_percent: u16,
-    pub target_amount: u64,
-    pub min_contribution: u64,
-    pub max_contribution: u64,
+    pub target_amount: u64, // lamports
+    pub min_contribution: u64, // lamports 
+    pub max_contribution: u64, // lamports
     pub management_fee: u16,
     pub strategy: String, // Trading strategy for the pool
 }
 
+// API layer request (accepts human-readable USDC amounts)
+#[derive(Deserialize)]
+pub struct ContributeToBucketApiRequest {
+    pub bucket_name: String,
+    // Accept human-readable USDC amount (e.g., 50.0) - backend will convert to lamports
+    pub amount: f64,
+    pub creator_pubkey: String,
+}
+
+// Instance layer request (uses lamports as u64)
 #[derive(Deserialize)]
 pub struct ContributeToBucketRequest {
     pub bucket_name: String,
-    pub amount: u64,
+    pub amount: u64, // lamports
     pub creator_pubkey: String, // base58 pubkey
 }
 
