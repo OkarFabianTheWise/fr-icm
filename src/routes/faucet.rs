@@ -24,8 +24,8 @@ pub struct FaucetResponse {
     pub tx_signature: Option<String>,
 }
 
-const USDC_MINT: &str = "7efeK5MMfmgcNeJkutSduzBGskFHziBhvmoPcPrJBmuF";
-const MAX_FAUCET_AMOUNT: u64 = 100_000_000_000; // 100 USDC (9 decimals)
+const USDC_MINT: &str = "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg";
+const MAX_FAUCET_AMOUNT: u64 = 100_000_000; // 100 USDC (9 decimals)
 const FAUCET_INTERVAL_SECS: u64 = 3 * 60 * 60; // 3 hours
 
 
@@ -146,7 +146,23 @@ pub async fn claim_faucet(
     let user_ata = spl_associated_token_account::get_associated_token_address(&user_pubkey, &usdc_mint);
     // tracing::info!("Faucet ATA: {}", faucet_ata);
     // tracing::info!("User ATA: {}", user_ata);
-    // Build transfer instruction
+    
+    // Check if user's ATA exists, create if not
+    let mut instructions = Vec::new();
+    
+    // Check if user ATA exists
+    let user_ata_account = rpc.get_account(&user_ata).await;
+    if user_ata_account.is_err() {
+        // Create user's ATA if it doesn't exist
+        let create_ata_ix = spl_associated_token_account::instruction::create_associated_token_account(
+            &faucet_keypair.pubkey(), // payer
+            &user_pubkey,             // wallet
+            &usdc_mint,               // mint
+            &spl_token::ID,           // token program
+        );
+        instructions.push(create_ata_ix);
+    }
+    
     // Build USDC transfer instruction
     let usdc_ix = spl_token::instruction::transfer(
         &spl_token::ID,
@@ -156,6 +172,7 @@ pub async fn claim_faucet(
         &[],
         req.amount,
     ).unwrap();
+    instructions.push(usdc_ix);
 
     // Build SOL airdrop instruction (0.05 SOL = 50_000_000 lamports)
     let sol_airdrop_lamports = 50_000_000u64;
@@ -164,6 +181,10 @@ pub async fn claim_faucet(
         &user_pubkey,
         sol_airdrop_lamports,
     );
+    
+    // Add SOL transfer to the beginning of instructions
+    instructions.insert(0, sol_ix);
+    
     let recent_blockhash = match rpc.get_latest_blockhash().await {
         Ok(b) => b,
         Err(e) => {
@@ -174,9 +195,9 @@ pub async fn claim_faucet(
             }).into_response();
         }
     };
-    // Merge both instructions into a single transaction
+    // Create transaction with all instructions
     let tx = solana_sdk::transaction::Transaction::new_signed_with_payer(
-        &[sol_ix, usdc_ix],
+        &instructions,
         Some(&faucet_keypair.pubkey()),
         &[faucet_keypair.as_ref()],
         recent_blockhash,

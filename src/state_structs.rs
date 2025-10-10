@@ -71,8 +71,9 @@ pub struct UnsignedTransactionResponse {
 pub struct CreateBucketRequest {
     pub name: String,
     pub token_mints: Vec<String>, // base58 pubkeys
-    pub contribution_window_days: u32,
-    pub trading_window_days: u32,
+    // Accept minutes directly from frontend to match smart contract expectations
+    pub contribution_window_minutes: u32,
+    pub trading_window_minutes: u32,
     pub creator_fee_percent: u16,
     pub target_amount: u64,
     pub min_contribution: u64,
@@ -88,7 +89,7 @@ pub struct ContributeToBucketRequest {
     pub creator_pubkey: String, // base58 pubkey
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct StartTradingRequest {
     pub bucket_name: String, // for backward compatibility
     pub strategy: String,
@@ -108,8 +109,11 @@ pub struct SwapTokensRequest {
     pub in_amount: u64,
     pub quoted_out_amount: u64,
     pub slippage_bps: u16,
-    pub platform_fee_bps: u16,
-    pub route_plan: Vec<u8>,
+    // Raydium-specific fields (these will be provided by the frontend or derived)
+    pub amm: Option<String>,
+    pub amm_authority: Option<String>,
+    pub pool_coin_token_account: Option<String>,
+    pub pool_pc_token_account: Option<String>,
 }
 
 #[derive(Deserialize)]
