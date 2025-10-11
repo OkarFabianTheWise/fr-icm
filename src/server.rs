@@ -73,11 +73,16 @@ pub async fn start() {
         .route("/api/v1/bucket/trading_pools", post(crate::routes::icm::get_trading_pool_info))
         .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token));
 
-    // Faucet route (no auth)
+    // Faucet route (requires auth)
     let faucet_routes = Router::new()
         .route("/api/v1/faucet/claim", post(crate::routes::faucet::claim_faucet))
         .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token))
         .with_state(Arc::new(app_state.clone()));
+
+    // Wallet routes (requires auth)
+    let wallet_routes = Router::new()
+        .merge(crate::routes::wallet::create_routes())
+        .layer(middleware::from_fn_with_state(jwt_service.clone(), AuthMiddleware::validate_token));
 
     use tower::ServiceBuilder;
     // Main app router
@@ -85,6 +90,7 @@ pub async fn start() {
         .route("/ping", get(ping)) // Health check endpoint
         .merge(bucket_routes)
         .merge(faucet_routes)
+        .merge(wallet_routes)
         // Merge agent routes
         .merge(agent::create_routes())
         // Merge auth routes

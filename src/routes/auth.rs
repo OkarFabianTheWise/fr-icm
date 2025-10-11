@@ -110,9 +110,26 @@ pub async fn me(
             vec![]
         }
     };
+
+    // Fetch wallet balances
+    let wallet_balances = match crate::routes::wallet::fetch_wallet_balances(&wallet_address).await {
+        Ok(balances) => serde_json::json!({
+            "sol": balances.sol_balance,
+            "usdc": balances.usdc_balance
+        }),
+        Err(e) => {
+            tracing::warn!("Failed to fetch wallet balances for {}: {}", wallet_address, e);
+            serde_json::json!({
+                "sol": 0.0,
+                "usdc": 0.0
+            })
+        }
+    };
+
     let body = serde_json::json!({
         "user": user,
         "wallet_address": wallet_address,
+        "wallet_balances": wallet_balances,
         "pools": all_pools
     });
     (StatusCode::OK, AxumJson(body))
@@ -276,6 +293,21 @@ pub async fn login(
         }
     };
 
+    // Fetch wallet balances
+    let wallet_balances = match crate::routes::wallet::fetch_wallet_balances(&wallet_address).await {
+        Ok(balances) => serde_json::json!({
+            "sol": balances.sol_balance,
+            "usdc": balances.usdc_balance
+        }),
+        Err(e) => {
+            tracing::warn!("Failed to fetch wallet balances for {}: {}", wallet_address, e);
+            serde_json::json!({
+                "sol": 0.0,
+                "usdc": 0.0
+            })
+        }
+    };
+
     // Set cookie attributes for cross-site refresh persistence
     let mut cookie = Cookie::new("access_token", access_token.clone());
     cookie.set_http_only(false);
@@ -291,10 +323,11 @@ pub async fn login(
         cookie.set_max_age(time::Duration::seconds(max_age));
     }
 
-    // Return user info, wallet address, expiresAt, and pools
+    // Return user info, wallet address, expiresAt, pools, and wallet balances
     let body = json!({
         "user": user,
         "wallet_address": wallet_address,
+        "wallet_balances": wallet_balances,
         "expires_at": expires_at,
         "pools": all_pools
     });
