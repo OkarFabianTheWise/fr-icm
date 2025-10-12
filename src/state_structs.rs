@@ -159,6 +159,12 @@ pub struct CloseBucketRequest {
     pub creator_pubkey: String, // base58 pubkey
 }
 
+#[derive(Deserialize)]
+pub struct InitializeProgramRequest {
+    pub fee_rate_bps: u16,
+    pub usdc_mint: String, // base58 string
+}
+
 #[derive(Serialize)]
 pub struct TxResponse {
     pub success: bool,

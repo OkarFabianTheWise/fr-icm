@@ -1,5 +1,5 @@
 {
-  "address": "FjAe8aANoma5MNo6JFQxYBtxdu8k2q2i5M9UwUBMAJBW",
+  "address": "7K5cc9n4QKV4ojDVB6fvtLmueGRGdczn6b6JiRMAkbtC",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -581,8 +581,41 @@
                 "path": "bucket"
               },
               {
-                "kind": "account",
-                "path": "token_program"
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
               },
               {
                 "kind": "account",
@@ -629,11 +662,7 @@
           }
         },
         {
-          "name": "usdc_mint",
-          "address": "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg",
-          "relations": [
-            "program_state"
-          ]
+          "name": "usdc_mint"
         },
         {
           "name": "program_state",
@@ -671,8 +700,41 @@
                 "path": "program_state"
               },
               {
-                "kind": "account",
-                "path": "token_program"
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
               },
               {
                 "kind": "account",
@@ -724,7 +786,8 @@
           "signer": true
         },
         {
-          "name": "token_program"
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
           "name": "associated_token_program",

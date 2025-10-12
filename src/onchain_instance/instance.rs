@@ -21,10 +21,10 @@ declare_program!(icm_program);
 pub const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
 pub const VAULT_SEED: &[u8] = b"vault";
 
-use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, ClaimRewards, CloseBucket};
-use icm_program::client::accounts::{CreateBucket as CreateBucketAccount, ContributeToBucket as ContributeToBucketAccount, StartTrading as StartTradingAccount, SwapTokens as SwapTokensAccount, ClaimRewards as ClaimRewardsAccount, CloseBucket as CloseBucketAccount, CreateProfile as CreateProfileAccount};
+use icm_program::client::args::{CreateBucket, ContributeToBucket, StartTrading, ClaimRewards, CloseBucket, InitializeProgram};
+use icm_program::client::accounts::{CreateBucket as CreateBucketAccount, ContributeToBucket as ContributeToBucketAccount, StartTrading as StartTradingAccount, SwapTokens as SwapTokensAccount, ClaimRewards as ClaimRewardsAccount, CloseBucket as CloseBucketAccount, CreateProfile as CreateProfileAccount, InitializeProgram as InitializeProgramAccount};
 pub use crate::state_structs::{TradingPool, CreatorProfile, BucketAccount, BucketInfo};
-use crate::state_structs::{CreateBucketRequest, ContributeToBucketRequest, StartTradingRequest, SwapTokensRequest, ClaimRewardsRequest, CloseBucketRequest, UnsignedTransactionResponse, GetCreatorProfileQuery, GetBucketQuery};
+use crate::state_structs::{CreateBucketRequest, ContributeToBucketRequest, StartTradingRequest, SwapTokensRequest, ClaimRewardsRequest, CloseBucketRequest, InitializeProgramRequest, UnsignedTransactionResponse, GetCreatorProfileQuery, GetBucketQuery};
 
 /// Format seconds into a human-readable time string
 fn format_time_remaining(seconds: i64) -> String {
@@ -97,6 +97,85 @@ impl IcmProgramInstance {
         Ok(Self {
             cluster,
             payer_pubkey: payer.pubkey(),
+        })
+    }
+    
+    /// Check if the program is initialized
+    pub async fn check_program_initialized(&self, usdc_mint: Pubkey) -> Result<bool> {
+        let cluster = self.cluster.clone();
+        let dummy_keypair = Keypair::new(); // We just need this for the client, won't be used for signing
+        let client = Client::new_with_options(cluster, Arc::new(dummy_keypair), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        // Derive program_state PDA
+        let (program_state_pda, _) = Pubkey::find_program_address(
+            &[b"program_state"],
+            &ICM_PROGRAM_ID,
+        );
+
+        match program.account::<icm_program::accounts::ProgramState>(program_state_pda).await {
+            Ok(program_state_account) => {
+                Ok(program_state_account.initialized && program_state_account.usdc_mint == usdc_mint)
+            },
+            Err(_) => Ok(false)
+        }
+    }
+    
+    /// Initialize the program state (must be called first before any other operations)
+    pub async fn initialize_program_transaction(
+        &self,
+        request: InitializeProgramRequest,
+        owner_keypair: Keypair,
+    ) -> Result<UnsignedTransactionResponse> {
+        let cluster = self.cluster.clone();
+        let keypair_for_client = owner_keypair.insecure_clone();
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let program = client.program(ICM_PROGRAM_ID)?;
+
+        let owner = owner_keypair.pubkey();
+        let usdc_mint = Pubkey::from_str(&request.usdc_mint)?;
+
+        // Derive program_state PDA
+        let (program_state_pda, _) = Pubkey::find_program_address(
+            &[b"program_state"],
+            &ICM_PROGRAM_ID,
+        );
+
+        // Derive fee_vault PDA (ATA for program_state and USDC mint)
+        let fee_vault = get_associated_token_address(&program_state_pda, &usdc_mint);
+
+        tracing::info!("=== INITIALIZE PROGRAM DEBUG INFO ===");
+        tracing::info!("Owner: {}", owner);
+        tracing::info!("USDC Mint: {}", usdc_mint);
+        tracing::info!("Program State PDA: {}", program_state_pda);
+        tracing::info!("Fee Vault: {}", fee_vault);
+        tracing::info!("Fee Rate BPS: {}", request.fee_rate_bps);
+
+        let ixs = program
+            .request()
+            .args(InitializeProgram {
+                fee_rate_bps: request.fee_rate_bps,
+            })
+            .accounts(InitializeProgramAccount {
+                program_state: program_state_pda,
+                fee_vault,
+                usdc_mint,
+                owner,
+                token_program: spl_token::ID,
+                associated_token_program: spl_associated_token_account::ID,
+                system_program: system_program::ID,
+            })
+            .instructions()?;
+
+        let latest_blockhash = program.rpc().get_latest_blockhash().await?;
+        let transaction = Transaction::new_with_payer(&ixs, Some(&owner));
+
+        let serialized_transaction = bincode::serialize(&transaction)?;
+        let base64_transaction = base64::encode(&serialized_transaction);
+
+        Ok(UnsignedTransactionResponse {
+            transaction: base64_transaction,
+            message: "Program initialized successfully".to_string(),
         })
     }
     
@@ -432,7 +511,7 @@ impl IcmProgramInstance {
         // Derive contributor token account (ATA)
         let contributor_token_account = get_associated_token_address(&contributor, &usdc_mint);
 
-        // Derive vault token account PDA: [b"vault", bucket_pda, usdc_mint]
+        // Derive vault token account (ATA for bucket and USDC mint)
         let vault_token_account = get_associated_token_address(&bucket_pda, &usdc_mint);
 
         // Derive program_state PDA
@@ -443,6 +522,97 @@ impl IcmProgramInstance {
 
         // Derive fee_vault PDA (ATA for program_state and USDC mint)
         let fee_vault = get_associated_token_address(&program_state_pda, &usdc_mint);
+
+        // Add debugging info
+        tracing::info!("=== CONTRIBUTE TO BUCKET DEBUG INFO ===");
+        tracing::info!("Bucket name: {}", request.bucket_name);
+        tracing::info!("Amount: {} lamports", request.amount);
+        tracing::info!("Creator: {}", creator);
+        tracing::info!("Contributor: {}", contributor);
+        tracing::info!("USDC Mint: {}", usdc_mint);
+        tracing::info!("Bucket PDA: {}", bucket_pda);
+        tracing::info!("Contribution Record PDA: {}", contribution_record_pda);
+        tracing::info!("Pool Contribution PDA: {}", pool_contribution_pda);
+        tracing::info!("Contributor Token Account: {}", contributor_token_account);
+        tracing::info!("Vault Token Account: {}", vault_token_account);
+        tracing::info!("Program State PDA: {}", program_state_pda);
+        tracing::info!("Fee Vault: {}", fee_vault);
+        
+        // Try to fetch the bucket account to verify it exists and check its state
+        match program.account::<icm_program::accounts::Bucket>(bucket_pda).await {
+            Ok(bucket_account) => {
+                tracing::info!("Bucket exists with status: {:?}", bucket_account.status);
+                tracing::info!("Bucket creator: {}", bucket_account.creator);
+                tracing::info!("Bucket raised amount: {}", bucket_account.raised_amount);
+                tracing::info!("Bucket contribution deadline: {}", bucket_account.contribution_deadline);
+                
+                // Verify the bucket creator matches the expected creator
+                if bucket_account.creator != creator {
+                    return Err(anyhow!("Bucket creator mismatch. Expected: {}, Found: {}", creator, bucket_account.creator));
+                }
+                
+                // Check if contribution window is still open
+                let current_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                    
+                if current_time >= bucket_account.contribution_deadline {
+                    return Err(anyhow!("Contribution deadline has passed"));
+                }
+            },
+            Err(e) => {
+                tracing::error!("Failed to fetch bucket account: {}", e);
+                return Err(anyhow!("Bucket does not exist or cannot be fetched: {}", e));
+            }
+        }
+        
+        // Check if program state exists and is initialized
+        match program.account::<icm_program::accounts::ProgramState>(program_state_pda).await {
+            Ok(program_state_account) => {
+                tracing::info!("Program state initialized: {}", program_state_account.initialized);
+                tracing::info!("Program state USDC mint: {}", program_state_account.usdc_mint);
+                
+                if !program_state_account.initialized {
+                    return Err(anyhow!("Program state is not initialized"));
+                }
+                
+                if program_state_account.usdc_mint != usdc_mint {
+                    return Err(anyhow!("USDC mint mismatch. Expected: {}, Found: {}", usdc_mint, program_state_account.usdc_mint));
+                }
+            },
+            Err(e) => {
+                tracing::error!("Failed to fetch program state: {}", e);
+                return Err(anyhow!("Program state does not exist or cannot be fetched: {}. Please initialize the program first by calling the /api/v1/program/initialize endpoint.", e));
+            }
+        }
+        
+        // Check if contributor has sufficient balance
+        match program.rpc().get_token_account_balance(&contributor_token_account).await {
+            Ok(balance) => {
+                let balance_lamports = balance.amount.parse::<u64>().unwrap_or(0);
+                tracing::info!("Contributor token balance: {} lamports", balance_lamports);
+                
+                if balance_lamports < request.amount {
+                    return Err(anyhow!("Insufficient token balance. Required: {}, Available: {}", request.amount, balance_lamports));
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Could not fetch contributor token balance: {}", e);
+                // Don't fail here as the account might not exist yet (will be created by ATA program)
+            }
+        }
+
+        // Verify vault token account exists (should have been created during create_bucket)
+        match program.rpc().get_account(&vault_token_account).await {
+            Ok(account) => {
+                tracing::info!("Vault token account exists with {} lamports", account.lamports);
+            },
+            Err(e) => {
+                tracing::error!("Vault token account does not exist: {}", e);
+                return Err(anyhow!("Vault token account does not exist. Make sure the bucket was created properly. Account: {}", vault_token_account));
+            }
+        }
 
         let ixs = program
             .request()

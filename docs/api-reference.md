@@ -416,7 +416,76 @@ Emergency stop all trading activities immediately.
 
 ## 💰 ICM Program Endpoints
 
-### `POST /api/v1/bucket`
+### ⚠️ Required First-Time Setup
+
+#### `GET /api/v1/program/status`
+
+Check if the ICM program is initialized. **Always call this first** to verify program status.
+
+**Query Parameters:**
+
+- `usdc_mint` (required): USDC mint address for your network
+
+**Response:**
+
+```json
+{
+  "status": "success",
+  "data": {
+    "initialized": true,
+    "message": "Program is initialized and ready to use"
+  }
+}
+```
+
+**Example:**
+
+```bash
+curl "http://localhost:3000/api/v1/program/status?usdc_mint=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+```
+
+#### `POST /api/v1/program/initialize`
+
+Initialize the ICM program state. **This MUST be called once** before any other program operations.
+
+**Request Body:**
+
+```json
+{
+  "fee_rate_bps": 500,
+  "usdc_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+}
+```
+
+**Response:**
+
+```json
+{
+  "status": "success",
+  "data": {
+    "transaction": "base64_encoded_transaction",
+    "message": "Program initialized successfully"
+  }
+}
+```
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/program/initialize \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "fee_rate_bps": 500,
+    "usdc_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+  }'
+```
+
+---
+
+### Regular Program Operations
+
+### `POST /api/v1/bucket/create`
 
 Create a new trading bucket.
 
@@ -459,6 +528,31 @@ Get bucket information.
   "is_active": true,
   "created_at": "2025-07-23T11:43:54.893Z"
 }
+```
+
+### `POST /api/v1/profile/create`
+
+Create a trading profile for the user. This should be done before creating buckets.
+
+**Request Body:** None (uses authenticated user information)
+
+**Response:**
+
+```json
+{
+  "status": "success",
+  "data": {
+    "transaction": "base64_encoded_transaction",
+    "message": "Profile created successfully"
+  }
+}
+```
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:3000/api/v1/profile/create \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
 ### `POST /api/v1/bucket/contribute`

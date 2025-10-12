@@ -100,9 +100,18 @@ curl http://localhost:3000/ping
 
 ### ICM Program
 
-- `POST /api/v1/bucket` - Create trading bucket
+#### ⚠️ First-Time Setup (Required)
+
+- `GET /api/v1/program/status?usdc_mint=<mint>` - Check if program is initialized
+- `POST /api/v1/program/initialize` - Initialize program (MUST be called first)
+
+#### Regular Operations
+
+- `POST /api/v1/profile/create` - Create trading profile
+- `POST /api/v1/bucket/create` - Create trading bucket
+- `POST /api/v1/bucket/contribute` - Contribute to bucket
 - `POST /api/v1/bucket/swap` - Execute swap
-- `GET /api/v1/bucket` - Get bucket info
+- `GET /api/v1/bucket/all` - Get all buckets
 
 ### Health & Monitoring
 
@@ -235,6 +244,40 @@ See [`docs/frontend-guide.md`](docs/frontend-guide.md) for complete frontend int
 - **Low Latency**: < 100ms average execution time
 - **High Throughput**: 1000+ requests/second capacity
 - **Memory Efficient**: Rust's zero-cost abstractions
+
+## 🔧 Troubleshooting
+
+### "Program state does not exist or cannot be fetched: Account not found"
+
+This error occurs when the ICM program hasn't been initialized yet. **This is required before any other operations.**
+
+#### Solution:
+
+1. **Check program status first:**
+
+   ```bash
+   curl "http://localhost:3000/api/v1/program/status?usdc_mint=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+   ```
+
+2. **Initialize the program (one-time setup):**
+
+   ```bash
+   curl -X POST http://localhost:3000/api/v1/program/initialize \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+     -d '{
+       "fee_rate_bps": 500,
+       "usdc_mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+     }'
+   ```
+
+3. **Then proceed with other operations** like creating profiles and buckets.
+
+### Common Issues
+
+- **Authentication Required**: Most endpoints require a valid JWT token
+- **Wrong USDC Mint**: Ensure you're using the correct USDC mint address for your network
+- **Insufficient Balance**: Check wallet balance before operations
 
 ## 🤝 Contributing
 

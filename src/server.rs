@@ -63,6 +63,9 @@ pub async fn start() {
 
     // Bucket endpoints require authentication
     let bucket_routes = Router::new()
+        .route("/api/v1/program/status", get(crate::routes::icm::check_program_status))
+        .route("/api/v1/program/initialize", post(crate::routes::icm::initialize_program))
+        .route("/api/v1/profile/create", post(crate::routes::icm::create_profile))
         .route("/api/v1/bucket/create", post(crate::routes::icm::create_bucket))
         .route("/api/v1/bucket/contribute", post(crate::routes::icm::contribute_to_bucket))
         .route("/api/v1/bucket/start-trading", post(crate::routes::icm::start_trading))

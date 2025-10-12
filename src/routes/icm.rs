@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc, Duration};
 use uuid;
 
 use crate::state_structs::{CreateBucketApiRequest, CreateBucketRequest, ContributeToBucketApiRequest, ContributeToBucketRequest,
-UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest};
+UnsignedTransactionResponse, GetBucketQuery, BucketInfo, TradingPool, CloseBucketRequest, GetCreatorProfileQuery, ClaimRewardsRequest, StartTradingRequest, SwapTokensRequest, InitializeProgramRequest};
 
 /// Convert human-readable USDC amount to lamports (multiply by 1e6)
 fn usdc_to_lamports(usdc_amount: f64) -> u64 {
@@ -91,6 +91,7 @@ fn calculate_pool_status_and_time(
 
 use std::convert::TryFrom;
 use std::str::FromStr;
+use std::collections::HashMap;
 use spl_token_2022::ID as TOKEN_2022_PROGRAM_ID;
 declare_program!(icm_program);
 const ICM_PROGRAM_ID: Pubkey = icm_program::ID;
@@ -168,6 +169,66 @@ pub async fn get_user_keypair_by_email(email: &str, state: &AppState) -> Result<
     // Convert Vec<i32> to Vec<u8>
     let privkey_bytes: Vec<u8> = privkey_bytes.into_iter().map(|b| b as u8).collect();
     Keypair::try_from(&privkey_bytes[..]).map_err(|_| "Invalid keypair bytes".to_string())
+}
+
+/// Check if program is initialized endpoint
+#[axum::debug_handler]
+pub async fn check_program_status(
+    State(state): State<AppState>,
+    Query(query): Query<std::collections::HashMap<String, String>>
+) -> ResponseJson<ApiResponse<serde_json::Value>> {
+    let usdc_mint_str = match query.get("usdc_mint") {
+        Some(mint) => mint,
+        None => {
+            return ResponseJson(ApiResponse::error("usdc_mint parameter is required".to_string()));
+        }
+    };
+
+    let usdc_mint = match Pubkey::from_str(usdc_mint_str) {
+        Ok(mint) => mint,
+        Err(_) => {
+            return ResponseJson(ApiResponse::error("Invalid usdc_mint format".to_string()));
+        }
+    };
+
+    match state.icm_client.check_program_initialized(usdc_mint).await {
+        Ok(is_initialized) => {
+            let response = serde_json::json!({
+                "initialized": is_initialized,
+                "message": if is_initialized { 
+                    "Program is initialized and ready to use" 
+                } else { 
+                    "Program is not initialized. Please call /api/v1/program/initialize first" 
+                }
+            });
+            ResponseJson(ApiResponse::success(response))
+        },
+        Err(e) => ResponseJson(ApiResponse::error(format!("Failed to check program status: {}", e))),
+    }
+}
+
+/// Initialize program endpoint (must be called first before any other operations)
+#[axum::debug_handler]
+pub async fn initialize_program(
+    State(state): State<AppState>,
+    Extension(auth_user): Extension<crate::auth::models::AuthUser>,
+    Json(request): Json<InitializeProgramRequest>
+) -> ResponseJson<ApiResponse<UnsignedTransactionResponse>> {
+    // Get user keypair
+    let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
+        Ok(keypair) => keypair,
+        Err(e) => {
+            return ResponseJson(ApiResponse::error(format!("Failed to get keypair: {}", e)));
+        }
+    };
+
+    // Call the initialize program transaction
+    let result = state.icm_client.initialize_program_transaction(request, keypair).await;
+
+    match result {
+        Ok(response) => ResponseJson(ApiResponse::success(response)),
+        Err(e) => ResponseJson(ApiResponse::error(format!("Failed to initialize program: {}", e))),
+    }
 }
 
 /// Create profile endpoint
