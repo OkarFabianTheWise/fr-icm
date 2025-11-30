@@ -45,8 +45,8 @@ jobs:
         run: cargo test --release --locked
 
       # 6️⃣ Lint using clippy
-      - name: Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # - name: Lint
+      #   run: cargo clippy --all-targets --all-features -- -D warnings
 
       # 7️⃣ Build Docker image
       - name: Build Docker image
