@@ -1,0 +1,69 @@
+# .github/workflows/icm.yml
+name: ICM CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  backend-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ Checkout repo
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2️⃣ Install Rust
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          profile: minimal
+
+      # 3️⃣ Cache Cargo registry & target to speed up builds
+      - name: Cache Cargo
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # 4️⃣ Install dependencies & build
+      - name: Build
+        run: cargo build --release
+
+      # 5️⃣ Run tests
+      - name: Run tests
+        run: cargo test --release --locked
+
+      # 6️⃣ Lint using clippy
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      # 7️⃣ Build Docker image
+      - name: Build Docker image
+        run: |
+          IMAGE_NAME="ghcr.io/$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')/icm-server:latest"
+          docker build -t $IMAGE_NAME .
+
+      # 8️⃣ Login to GHCR
+      - name: Login to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 9️⃣ Push Docker image
+      - name: Push Docker image
+        run: |
+          IMAGE_NAME="ghcr.io/$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')/icm-server:latest"
+          docker push $IMAGE_NAME
