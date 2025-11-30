@@ -1,0 +1,21 @@
+# Git
+.git
+.gitignore
+
+# Rust
+target/
+
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+
+# Misc
+*.md
+LICENSE
+docs/failed to solve: failed to compute cache key: failed to calculate checksum of ref ofbmr2wybz2e1juivjzwgr4wa::xtcsz5lpl0h0t4695h8ljua5i: "/Cargo.lock": not found
