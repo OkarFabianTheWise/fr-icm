@@ -6,7 +6,7 @@
 ![Rust Version](https://img.shields.io/badge/rust-1.75+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-An intelligent, high-performance trading system built with Rust that combines AI-driven decision making with Solana blockchain integration and Jupiter DEX aggregation.
+An intelligent trading assistant built with Rust and a lightweight backend. Important: the system provides token insight and concise recommendations to help users improve their trading decisions — it does NOT execute autonomous trades on users' behalf. All execution is manual and must be initiated by the user via the UI or backend swap endpoints.
 
 ## 🚀 Quick Start
 
@@ -30,35 +30,40 @@ curl http://localhost:3000/ping
 
 ## 🏗️ System Architecture
 
+The system is intentionally structured to provide advisory AI-only insights while keeping execution under explicit user control. The primary agent flow is:
+
+ASI One Agent → API Gateway / Mailbox Agent → Our Frontend
+
+- ASI One Agent: the LLM/agent that performs analysis and generates recommendations.
+- API Gateway / Mailbox Agent: a lightweight mailbox layer that accepts user queries, queues/forwards them to the agent, and returns the agent responses to the frontend.
+- Frontend: requests token insights from the gateway and presents recommendations to users. Users then act manually via manual swap UI or backend swap endpoints.
+
+Simplified diagram:
+
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   HTTP Server   │────│  Trading Agent  │────│  Jupiter DEX    │
-│   (Axum/Tokio)  │    │   (AI-Powered)  │    │  Integration    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         │              ┌─────────────────┐              │
-         │              │ Data Components │              │
-         │              └─────────────────┘              │
-         │                       │                       │
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Database      │    │   Executor      │    │ Solana Network │
-│   (PostgreSQL)  │────│  (Your Code!)   │────│   (Devnet)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+[ ASI One Agent ]  <--->  [ API Gateway / Mailbox Agent ]  <--->  [ Frontend (UI) ]
+         |                        |                                  |
+         |                        |                                  |
+     (Model)                 (HTTP + mailbox)                    (User interacts)
 ```
+
+Notes:
+
+- The backend retains minimal state and acts as a secure relay and persistence layer for user portfolios, pools, and manual swap requests.
+- The AI path is advisory-only. The system will never automatically submit trades on behalf of a user.
 
 ## 📦 Core Components
 
 ### 🤖 **AI Trading Agent** (`src/agent/`)
 
-- **Purpose**: Makes intelligent trading decisions using OpenAI
-- **Key Features**: Strategy planning, risk management, adaptive learning
-- **Entry Point**: `trading_agent.rs`
+- **Purpose**: Provide concise token-level insight and recommendations (sell / buy / hold / DCA).
+- **Important**: Advisory-only. The agent suggests actions but does not create or sign transactions.
+- **Agent Flow**: User -> API Gateway (mailbox) -> ASI One Agent -> API Gateway -> Frontend.
 
 ### ⚡ **Executor** (`src/agent/executor.rs`)
 
-- **Purpose**: Executes trading plans by building and submitting transactions
-- **Key Features**: Concurrent execution, Jupiter integration, metrics tracking
-- **Your Implementation**: Core transaction execution logic
+- **Purpose**: (Optional / internal) helper utilities for transaction building used by creators or admin flows when necessary.
+- **User-facing note**: Regular users do not get automated execution from the AI — manual swap flows in the frontend call backend endpoints that perform swaps after user confirmation.
 
 ### 📊 **Data Fetcher** (`src/agent/data_fetcher.rs`)
 
@@ -91,26 +96,22 @@ curl http://localhost:3000/ping
 
 ## 🔌 API Endpoints
 
-### Agent Control
+### Advisory / Insight
+
+- `POST /api/v1/ai/insight` - Submit a token insight request (for a selected token). This endpoint forwards the query to the mailbox/gateway which communicates with the ASI One Agent and returns a concise recommendation. Response is advisory only.
+
+### Agent Control (admin / internal)
 
 - `GET /api/v1/agent/status` - Get agent status
-- `POST /api/v1/agent/start` - Start trading
-- `POST /api/v1/agent/stop` - Stop trading
-- `POST /api/v1/agent/rebalance` - Force rebalance
+- `POST /api/v1/agent/start` - Start agent (admin)
+- `POST /api/v1/agent/stop` - Stop agent (admin)
+- `POST /api/v1/agent/rebalance` - Force rebalance (admin)
 
-### ICM Program
+### ICM Program (manual execution)
 
-#### ⚠️ First-Time Setup (Required)
-
-- `GET /api/v1/program/status?usdc_mint=<mint>` - Check if program is initialized
-- `POST /api/v1/program/initialize` - Initialize program (MUST be called first)
-
-#### Regular Operations
-
-- `POST /api/v1/profile/create` - Create trading profile
-- `POST /api/v1/bucket/create` - Create trading bucket
+- `POST /api/v1/bucket/swap` - Execute swap (manual; requires explicit user action/confirmation)
 - `POST /api/v1/bucket/contribute` - Contribute to bucket
-- `POST /api/v1/bucket/swap` - Execute swap
+- `POST /api/v1/bucket/create` - Create trading bucket
 - `GET /api/v1/bucket/all` - Get all buckets
 
 ### Health & Monitoring
@@ -230,13 +231,14 @@ See [`docs/frontend-guide.md`](docs/frontend-guide.md) for complete frontend int
 - **[API Reference](docs/api-reference.md)** - Complete API documentation
 - **[Trading Strategies](docs/strategies.md)** - Strategy implementation guide
 
-## 🔒 Security Notes
+## 🔒 Security & Advisory Notes
 
-- **Private Keys**: Never commit private keys to version control
-- **API Keys**: Store in environment variables only
-- **Rate Limiting**: Implement for production deployments
-- **Input Validation**: All API inputs are validated
-- **Error Handling**: Graceful failure modes implemented
+- Advisory-only AI: AI outputs are recommendations only. Users must review and explicitly confirm any trades.
+- Private Keys: Never commit private keys to version control.
+- API Keys: Store in environment variables only.
+- Rate Limiting: Implement for production deployments.
+- Input Validation: All API inputs are validated.
+- Error Handling: Graceful failure modes implemented.
 
 ## 📈 Performance
 
@@ -293,4 +295,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**🎯 Ready to trade? Your AI-powered trading system is waiting!**
+**🎯 Advisory-first: get better insights, act manually.**
