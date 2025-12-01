@@ -114,7 +114,7 @@ impl From<icm_program::accounts::TradingPool> for TradingPool {
             trading_start_time: src.trading_start_time.map(|v| v.to_string()),
             trading_end_time: src.trading_end_time.map(|v| v.to_string()),
             phase: format!("{:?}", src.phase),
-            management_fee: src.management_fee,
+            management_fee: src.management_fee as u16,
             raised_amount: None,
             contribution_percent: None,
             strategy: None,
@@ -498,20 +498,34 @@ pub async fn create_bucket(
             let error_str = e.to_string();
             // Only try to create if it's actually missing (not other errors)
             if error_str.contains("Account does not exist") || error_str.contains("AccountNotFound") {
-                // tracing::info!("[create_bucket] Creator profile doesn't exist, creating it first");
+                tracing::info!("[create_bucket] Creator profile doesn't exist, creating it first");
                 match state.icm_client.create_profile_transaction(keypair.insecure_clone()).await {
                     Ok(profile_response) => {
-                        tracing::info!("[create_bucket] Creator profile created: {}", profile_response.transaction);
+                        tracing::info!("[create_bucket] Creator profile created with signature: {}", profile_response.transaction);
+                        
+                        // Wait a moment for the profile creation to be confirmed and propagated
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                        
+                        // Verify the profile was actually created
+                        let verify_query = GetCreatorProfileQuery {
+                            creator_pubkey: keypair.pubkey().to_string(),
+                        };
+                        match state.icm_client.fetch_creator_profile_by_pda(verify_query, keypair.insecure_clone()).await {
+                            Ok(_) => {
+                                tracing::info!("[create_bucket] Creator profile verified successfully");
+                            },
+                            Err(verify_err) => {
+                                tracing::warn!("[create_bucket] Could not verify creator profile after creation: {}", verify_err);
+                            }
+                        }
                     },
                     Err(create_err) => {
                         let create_error_str = create_err.to_string();
                         // If it's "already in use", the profile actually exists, so continue
                         if create_error_str.contains("already in use") || create_error_str.contains("custom program error: 0x0") {
                             tracing::info!("[create_bucket] Creator profile already exists (race condition), continuing");
-                            // return result with error
-
                         } else {
-                            // tracing::error!("[create_bucket] Failed to create creator profile: {}", create_err);
+                            tracing::error!("[create_bucket] Failed to create creator profile: {}", create_err);
                             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(
                                 format!("Failed to create creator profile: {}", create_err)
                             );
@@ -612,9 +626,16 @@ pub async fn start_trading(
     Extension(auth_user): Extension<crate::auth::models::AuthUser>,
     Json(request): Json<StartTradingRequest>
 ) -> impl IntoResponse {
+    tracing::error!("[start_trading] 🔥 START_TRADING FUNCTION CALLED - This should appear in logs!");
+    tracing::info!("[start_trading] Request received: bucket_name={}, creator_pubkey={}", request.bucket_name, request.creator_pubkey);
+    
     // Get user keypair
+    tracing::info!("[start_trading] Getting user keypair for email: {}", auth_user.email);
     let keypair = match get_user_keypair_by_email(&auth_user.email, &state).await {
-        Ok(kp) => kp,
+        Ok(kp) => {
+            tracing::info!("[start_trading] Successfully retrieved keypair for user: {}", kp.pubkey());
+            kp
+        },
         Err(e) => {
             tracing::error!("[start_trading] Failed to get user keypair: {}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(e.to_string());
@@ -623,14 +644,24 @@ pub async fn start_trading(
     };
 
     // Generate a unique pool ID
+    tracing::info!("[start_trading] Generating unique pool ID");
     let pool_id = uuid::Uuid::new_v4().to_string();
+    tracing::info!("[start_trading] Generated pool ID: {}", pool_id);
     
     // Save trading pool info to DB using the standardized function
+    tracing::info!("[start_trading] Parsing trading end time: {}", request.trading_end_time);
     let trading_end_time = chrono::DateTime::parse_from_rfc3339(&request.trading_end_time)
-        .map_err(|e| format!("Invalid trading_end_time format: {}", e))
+        .map_err(|e| {
+            tracing::error!("[start_trading] Failed to parse trading_end_time: {}", e);
+            format!("Invalid trading_end_time format: {}", e)
+        })
         .and_then(|dt| Ok(dt.with_timezone(&chrono::Utc)))
-        .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::days(30)); // Default to 30 days if parsing fails
+        .unwrap_or_else(|_| {
+            tracing::warn!("[start_trading] Using default trading end time (30 days from now)");
+            chrono::Utc::now() + chrono::Duration::days(30)
+        }); // Default to 30 days if parsing fails
     
+    tracing::info!("[start_trading] Saving trading pool to database");
     if let Err(e) = crate::database::models::DatabaseTradingPool::insert_trading_pool(
         state.db.pool(),
         &request.creator_pubkey,
@@ -645,8 +676,10 @@ pub async fn start_trading(
         let error_response = ApiResponse::<UnsignedTransactionResponse>::error("Failed to save pool to database".to_string());
         return ResponseJson(error_response);
     }
+    tracing::info!("[start_trading] Successfully saved trading pool to database");
 
     // Derive token pairs from token_bucket (all unique pairs)
+    tracing::info!("[start_trading] Deriving token pairs from token bucket: {:?}", request.token_bucket);
     let mut token_pairs = Vec::new();
     let tokens = &request.token_bucket;
     for i in 0..tokens.len() {
@@ -656,8 +689,10 @@ pub async fn start_trading(
             }
         }
     }
+    tracing::info!("[start_trading] Generated {} token pairs", token_pairs.len());
 
     // Build a default StrategyConfig from the strategy string
+    tracing::info!("[start_trading] Building strategy config for: {}", request.strategy);
     let strategy_type = match request.strategy.to_lowercase().as_str() {
         "arbitrage" => crate::agent::types::StrategyType::Arbitrage,
         "gridtrading" | "grid_trading" => crate::agent::types::StrategyType::GridTrading,
@@ -666,6 +701,7 @@ pub async fn start_trading(
         "trendfollowing" | "trend_following" => crate::agent::types::StrategyType::TrendFollowing,
         _ => crate::agent::types::StrategyType::DCA,
     };
+    tracing::info!("[start_trading] Selected strategy type: {:?}", strategy_type);
     let strategy_config = crate::agent::types::StrategyConfig {
         strategy_type,
         parameters: crate::agent::types::StrategyParameters {
@@ -693,6 +729,7 @@ pub async fn start_trading(
     };
 
     // Get OpenAI API key from environment
+    tracing::info!("[start_trading] Getting OpenAI API key from environment");
     let openai_api_key = std::env::var("OPENAI_API_KEY")
         .unwrap_or_else(|_| {
             tracing::warn!("[start_trading] OPENAI_API_KEY not set, using default");
@@ -700,7 +737,10 @@ pub async fn start_trading(
         });
 
     // Call the actual start_trading_transaction to create the blockchain transaction
-    tracing::info!("[start_trading] Calling start_trading_transaction to create blockchain transaction");
+    tracing::info!("[start_trading] About to call start_trading_transaction to create blockchain transaction");
+    tracing::info!("[start_trading] Request details - bucket_name: {}, creator_pubkey: {}, strategy: {}", 
+        request.bucket_name, request.creator_pubkey, request.strategy);
+    
     let tx_response = match state.icm_client.start_trading_transaction(request.clone(), keypair).await {
         Ok(response) => {
             tracing::info!("[start_trading] Blockchain transaction created successfully: {}", response.transaction);
@@ -708,19 +748,23 @@ pub async fn start_trading(
         },
         Err(e) => {
             tracing::error!("[start_trading] Failed to create blockchain transaction: {}", e);
+            tracing::error!("[start_trading] Error details: {:?}", e);
             let error_response = ApiResponse::<UnsignedTransactionResponse>::error(format!("Failed to create blockchain transaction: {}", e));
             return ResponseJson(error_response);
         }
     };
 
+    tracing::info!("[start_trading] Creating trading agent configuration");
     let agent_config = crate::agent::trading_agent::TradingAgentConfigBuilder::new()
         .with_openai_api_key(openai_api_key)
         .with_token_pairs(token_pairs)
         .with_strategy_configs(vec![strategy_config])
         .with_portfolio_id(uuid::Uuid::parse_str(&pool_id).unwrap())
         .build();
+    
     match agent_config {
         Ok(config) => {
+            tracing::info!("[start_trading] Agent config created successfully, spawning trading agent");
             let icm_client = state.icm_client.clone();
             let db_pool = state.db.pool().clone();
             tokio::spawn(async move {
@@ -739,6 +783,7 @@ pub async fn start_trading(
         }
     }
 
+    tracing::info!("[start_trading] Returning successful response");
     ResponseJson(ApiResponse::success(tx_response))
 }
 

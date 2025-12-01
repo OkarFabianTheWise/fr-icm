@@ -179,6 +179,28 @@ pub async fn register(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // Create on-chain creator profile
+    let keypair_for_profile = Keypair::from_bytes(&keypair.to_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    tracing::info!("[register] Creating on-chain creator profile for user: {}", pubkey_str);
+    match app_state.icm_client.create_profile_transaction(keypair_for_profile).await {
+        Ok(profile_response) => {
+            tracing::info!("[register] Creator profile created successfully with signature: {}", profile_response.transaction);
+        },
+        Err(e) => {
+            let error_str = e.to_string();
+            // If profile already exists (shouldn't happen on registration, but handle it)
+            if error_str.contains("already in use") || error_str.contains("custom program error: 0x0") {
+                tracing::info!("[register] Creator profile already exists for new user (unexpected but continuing)");
+            } else {
+                tracing::error!("[register] Failed to create on-chain creator profile: {}", e);
+                // Don't fail registration - user can create profile later when creating first bucket
+                tracing::warn!("[register] Continuing with registration despite profile creation failure");
+            }
+        }
+    }
+
     let user = AuthUser {
         id: user_id,
         email: email.clone(),
@@ -195,17 +217,19 @@ pub async fn register(
     // Set cookie attributes for cross-site refresh persistence
     // Use a consistent cookie name for frontend and backend
     let mut cookie = Cookie::new("access_token", access_token.clone());
-    cookie.set_http_only(true);
+    cookie.set_http_only(false); // Allow JavaScript access for debugging
     cookie.set_secure(true);
-    cookie.set_same_site(SameSite::None); // Lax is more compatible for most apps
+    cookie.set_same_site(SameSite::None); // Required for cross-origin
     cookie.set_path("/");
-    cookie.set_domain("localhost");
+    // Don't set domain to work across localhost and deployed environments
     // Set expiry to match JWT expiry
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
     let max_age = expires_at - now;
     if max_age > 0 {
         cookie.set_max_age(time::Duration::seconds(max_age));
     }
+    
+    tracing::info!("[register] Setting cookie for user: {}, expires in: {} seconds", email, max_age);
 
     // Return user info and wallet address, but NOT the token
     let body = json!({
@@ -341,8 +365,22 @@ pub async fn login(
 }
 
 pub async fn logout() -> impl IntoResponse {
-    // For stateless JWT, just return 204. Client deletes token.
-    StatusCode::NO_CONTENT
+    // Clear the access_token cookie by setting it to expire immediately
+    let mut cookie = Cookie::new("access_token", "");
+    cookie.set_http_only(true);
+    cookie.set_secure(true);
+    cookie.set_same_site(SameSite::None);
+    cookie.set_path("/");
+    cookie.set_max_age(time::Duration::seconds(0)); // Expire immediately
+    
+    let body = json!({"message": "Logged out successfully"});
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::SET_COOKIE, cookie.to_string())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(&body).unwrap())
+        .unwrap();
+    response
 }
 
 pub fn create_auth_routes() -> Router<AppState> {

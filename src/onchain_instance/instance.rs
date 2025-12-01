@@ -13,6 +13,8 @@ use solana_sdk::{
     signer::Signer,
     system_program,
     sysvar,
+    compute_budget::ComputeBudgetInstruction,
+    instruction::Instruction,
 };
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account::get_associated_token_address;
@@ -167,14 +169,17 @@ impl IcmProgramInstance {
             })
             .instructions()?;
 
-        let latest_blockhash = program.rpc().get_latest_blockhash().await?;
-        let transaction = Transaction::new_with_payer(&ixs, Some(&owner));
-
-        let serialized_transaction = bincode::serialize(&transaction)?;
-        let base64_transaction = base64::encode(&serialized_transaction);
+        let recent_blockhash = program.rpc().get_latest_blockhash().await?;
+        let tx = Transaction::new_signed_with_payer(
+            &ixs,
+            Some(&owner),
+            &[&owner_keypair],
+            recent_blockhash,
+        );
+        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
 
         Ok(UnsignedTransactionResponse {
-            transaction: base64_transaction,
+            transaction: sig.to_string(),
             message: "Program initialized successfully".to_string(),
         })
     }
@@ -376,13 +381,16 @@ impl IcmProgramInstance {
         let cluster = self.cluster.clone();
         let keypair_for_client = keypair.insecure_clone();
         let keypair_for_sign = keypair.insecure_clone();
-        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::confirmed());
         let program = client.program(ICM_PROGRAM_ID)?;
 
         let creator = keypair.pubkey();
         let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);
 
-        let ixs = program
+        tracing::info!("[create_profile_transaction] Creating profile for creator: {}", creator);
+        tracing::info!("[create_profile_transaction] Creator profile PDA: {}", creator_profile_pda);
+
+        let mut ixs = program
             .request()
             .accounts(CreateProfileAccount {
                 creator_profile: creator_profile_pda,
@@ -392,6 +400,10 @@ impl IcmProgramInstance {
             .args(icm_program::client::args::CreateProfile {})
             .instructions()?;
 
+        // Add compute budget instruction
+        let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(300_000);
+        ixs.insert(0, compute_budget_ix);
+
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
             &ixs,
@@ -399,6 +411,7 @@ impl IcmProgramInstance {
             &[&keypair_for_sign],
             recent_blockhash,
         );
+        tracing::info!("[create_profile_transaction] Sending and confirming transaction...");
         let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
 
         Ok(UnsignedTransactionResponse {
@@ -416,7 +429,7 @@ impl IcmProgramInstance {
         let cluster = self.cluster.clone();
         let keypair_for_client = keypair.insecure_clone();
         let keypair_for_sign = keypair.insecure_clone();
-        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
+        let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::confirmed());
         let program = client.program(ICM_PROGRAM_ID)?;
 
         let creator = keypair.pubkey();
@@ -425,18 +438,84 @@ impl IcmProgramInstance {
         // Derive PDAs for bucket, trading_pool, creator_profile
         let (bucket_pda, _) = Pubkey::find_program_address(&[b"bucket", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
         let (trading_pool_pda, _) = Pubkey::find_program_address(&[b"trading_pool", request.name.as_bytes(), creator.as_ref()], &ICM_PROGRAM_ID);
-        // let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);
+        let (creator_profile_pda, _) = Pubkey::find_program_address(&[b"creator_profile", creator.as_ref()], &ICM_PROGRAM_ID);
         let usdc_mint = Pubkey::from_str("2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg")?;
-        // Derive contributor token account (ATA)
+        
+        tracing::info!("=== CREATE BUCKET DEBUG INFO ===");
+        tracing::info!("Bucket name: {}", request.name);
+        tracing::info!("Creator: {}", creator);
+        tracing::info!("Bucket PDA: {}", bucket_pda);
+        tracing::info!("Trading Pool PDA: {}", trading_pool_pda);
+        tracing::info!("Creator Profile PDA: {}", creator_profile_pda);
+        
+        // Verify creator profile exists before proceeding, create if it doesn't
+        match program.account::<icm_program::accounts::CreatorProfile>(creator_profile_pda).await {
+            Ok(_) => {
+                tracing::info!("Creator profile verified - exists on chain");
+            },
+            Err(e) => {
+                tracing::warn!("Creator profile does NOT exist on chain: {}. Creating it now...", e);
+                
+                // Create the profile
+                let keypair_for_profile = keypair.insecure_clone();
+                match self.create_profile_transaction(keypair_for_profile).await {
+                    Ok(profile_response) => {
+                        tracing::info!("Creator profile created successfully with signature: {}", profile_response.transaction);
+                        
+                        // Wait for confirmation
+                        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                        
+                        // Verify it was created
+                        match program.account::<icm_program::accounts::CreatorProfile>(creator_profile_pda).await {
+                            Ok(_) => {
+                                tracing::info!("Creator profile verified after creation");
+                            },
+                            Err(verify_err) => {
+                                tracing::error!("Failed to verify creator profile after creation: {}", verify_err);
+                                return Err(anyhow!("Created profile but verification failed: {}", verify_err));
+                            }
+                        }
+                    },
+                    Err(create_err) => {
+                        let error_str = create_err.to_string();
+                        // If profile already exists (race condition), continue
+                        if error_str.contains("already in use") || error_str.contains("custom program error: 0x0") {
+                            tracing::info!("Creator profile already exists (race condition), continuing");
+                        } else {
+                            tracing::error!("Failed to create creator profile: {}", create_err);
+                            return Err(anyhow!("Failed to create creator profile: {}", create_err));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Derive program_state PDA
+        let (program_state_pda, _) = Pubkey::find_program_address(
+            &[b"program_state"],
+            &ICM_PROGRAM_ID,
+        );
+        
+        // Derive vault token account (ATA for bucket and USDC mint)
         let vault_token_account = get_associated_token_address(&bucket_pda, &usdc_mint);
+        
+        // Derive creator token account (ATA for creator and USDC mint)
+        let creator_token_account = get_associated_token_address(&creator, &usdc_mint);
+        
+        // Derive fee_vault PDA (ATA for program_state and USDC mint)
+        let fee_vault = get_associated_token_address(&program_state_pda, &usdc_mint);
 
-        let ixs = program
+        let mut ixs = program
             .request()
             .accounts(CreateBucketAccount {
                 bucket: bucket_pda,
                 trading_pool: trading_pool_pda,
+                creator_profile: creator_profile_pda,
                 vault_token_account,
+                creator_token_account,
                 usdc_mint: usdc_mint,
+                program_state: program_state_pda,
+                fee_vault,
                 creator,
                 token_program: spl_token::ID,
                 associated_token_program: spl_associated_token_account::ID,
@@ -451,9 +530,13 @@ impl IcmProgramInstance {
                 target_amount: request.target_amount,
                 min_contribution: request.min_contribution,
                 max_contribution: request.max_contribution,
-                management_fee: request.management_fee,
+                management_fee: request.management_fee as u64,
             })
             .instructions()?;
+
+        // Add compute budget instruction to request more compute units
+        let compute_budget_ix = ComputeBudgetInstruction::set_compute_unit_limit(400_000);
+        ixs.insert(0, compute_budget_ix);
 
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         let tx = Transaction::new_signed_with_payer(
@@ -631,7 +714,7 @@ impl IcmProgramInstance {
                 system_program: system_program::id(),
             })
             .args(ContributeToBucket {
-                bucket_name: request.bucket_name.clone(),
+                // bucket_name: request.bucket_name.clone(),
                 amount: request.amount,
             })
             .instructions()?;
@@ -774,7 +857,7 @@ impl IcmProgramInstance {
             trading_start_time: anchor_pool.trading_start_time.map(|v| v.to_string()),
             trading_end_time: anchor_pool.trading_end_time.map(|v| v.to_string()),
             phase: format!("{:?}", anchor_pool.phase),
-            management_fee: anchor_pool.management_fee,
+            management_fee: anchor_pool.management_fee as u16,
             raised_amount: None,
             contribution_percent: None,
             strategy: None,
@@ -862,7 +945,7 @@ impl IcmProgramInstance {
                         closed_at: anchor_bucket.closed_at.to_string(),
                         bump: anchor_bucket.bump,
                         creator_profile: anchor_bucket.creator_profile,
-                        performance_fee: anchor_bucket.performance_fee,
+                        performance_fee: anchor_bucket.performance_fee as u16,
                         raised_amount: lamports_to_usdc(anchor_bucket.raised_amount),
                         contributor_count: anchor_bucket.contributor_count,
                         strategy,
@@ -878,102 +961,40 @@ impl IcmProgramInstance {
         Ok(buckets)
     }
 
-    /// Start trading transaction for frontend signing
+    /// Start trading transaction - signs and submits transaction server-side
     pub async fn start_trading_transaction(
         &self,
         request: StartTradingRequest,
         keypair: Keypair
     ) -> Result<UnsignedTransactionResponse> {
-        tracing::info!("[start_trading_transaction] Starting transaction creation");
-        tracing::info!("[start_trading_transaction] Request: bucket_name={}, creator_pubkey={}, strategy={}", 
-            request.bucket_name, request.creator_pubkey, request.strategy);
-        tracing::info!("[start_trading_transaction] Token bucket: {:?}", request.token_bucket);
-        tracing::info!("[start_trading_transaction] Total amount: {}, management_fee: {}", 
-            request.total_amount_available_to_trade, request.management_fee);
-        
+        tracing::error!("[start_trading_transaction] 🔥 FUNCTION CALLED - This should appear in logs!");
+        tracing::info!("[start_trading_transaction] Starting transaction creation and submission");
+
         let cluster = self.cluster.clone();
-        tracing::debug!("[start_trading_transaction] Using cluster: {:?}", cluster);
-        
+
         let keypair_for_client = keypair.insecure_clone();
-        tracing::debug!("[start_trading_transaction] Creating client with keypair: {}", keypair_for_client.pubkey());
+        let keypair_for_sign = keypair.insecure_clone();
         
         let client = Client::new_with_options(cluster, Arc::new(keypair_for_client), CommitmentConfig::processed());
-        tracing::debug!("[start_trading_transaction] Client created successfully");
-        
+
         let program = client.program(ICM_PROGRAM_ID)?;
-        tracing::debug!("[start_trading_transaction] Program client created for ID: {}", ICM_PROGRAM_ID);
 
         let creator = Pubkey::from_str(&request.creator_pubkey).map_err(|e| anyhow!(e))?;
-        tracing::info!("[start_trading_transaction] Creator pubkey parsed: {}", creator);
         
         let (bucket_pda, bucket_bump) = Pubkey::find_program_address(
             &[b"bucket", request.bucket_name.as_bytes(), creator.as_ref()], 
             &ICM_PROGRAM_ID
         );
-        tracing::info!("[start_trading_transaction] Bucket PDA derived: {} (bump: {})", bucket_pda, bucket_bump);
         
         let (trading_pool_pda, trading_pool_bump) = Pubkey::find_program_address(
             &[b"trading_pool", request.bucket_name.as_bytes(), creator.as_ref()], 
             &ICM_PROGRAM_ID
         );
-        tracing::info!("[start_trading_transaction] Trading pool PDA derived: {} (bump: {})", trading_pool_pda, trading_pool_bump);
 
-        // Solend devnet accounts for USDC reserve
-        tracing::info!("[start_trading_transaction] Setting up Solend accounts");
-        let solend_program = Pubkey::from_str("ALend7Ketfx5bxh6ghsCDXAoDrhvEmsXT3cynB6aPLgx").unwrap();
-        tracing::debug!("[start_trading_transaction] Solend program: {}", solend_program);
-        
-        let reserve = Pubkey::from_str("FNNkz4RCQezSSS71rW2tvqZH1LCkTzaiG7Nd1LeA5x5y").unwrap();
-        tracing::debug!("[start_trading_transaction] Reserve: {}", reserve);
-        
-        let lending_market = Pubkey::from_str("GvjoVKNjBvQcFaSKUW1gTE7DxhSpjHbE69umVR5nPuQp").unwrap();
-        tracing::debug!("[start_trading_transaction] Lending market: {}", lending_market);
-        
-        let pyth_oracle = Pubkey::from_str("CqFJLrT4rSpA46RQkVYWn8tdBDuQ7p7RXcp6Um76oaph").unwrap();
-        tracing::debug!("[start_trading_transaction] Pyth oracle: {}", pyth_oracle);
-        
-        let switchboard_oracle = Pubkey::from_str("7azgmy1pFXHikv36q1zZASvFq5vFa39TT9NweVugKKTU").unwrap();
-        tracing::debug!("[start_trading_transaction] Switchboard oracle: {}", switchboard_oracle);
-        
-        // USDC Reserve related accounts for devnet
-        tracing::info!("[start_trading_transaction] Setting up USDC reserve accounts");
-        let reserve_liquidity_supply = Pubkey::from_str("8SheGtsopRUDzdiD6v6BR9a6bqZ9QwywYQY99Fp5meNf").unwrap(); // USDC reserve liquidity supply
-        tracing::debug!("[start_trading_transaction] Reserve liquidity supply: {}", reserve_liquidity_supply);
-        
-        let reserve_collateral_mint = Pubkey::from_str("FzwZWRMc3GCqjSrcpVX3ueJc6UpcV6iWWb7ZMsTXE3Gf").unwrap(); // cUSDC mint
-        tracing::debug!("[start_trading_transaction] Reserve collateral mint: {}", reserve_collateral_mint);
-        
-        let lending_market_authority = Pubkey::from_str("DdZR6zRFiUt4S5mg7AV1uKB2z1f1WzcNYCaTEEWPAuby").unwrap(); // Lending market authority
-        tracing::debug!("[start_trading_transaction] Lending market authority: {}", lending_market_authority);
-        
-        // Your bucket's vault token account (source of USDC to lend)
-        tracing::info!("[start_trading_transaction] Setting up token accounts");
-        let usdc_mint = Pubkey::from_str("2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg").unwrap(); // Your USDC mint from tests
-        tracing::debug!("[start_trading_transaction] USDC mint: {}", usdc_mint);
-        
-        let source_liquidity = get_associated_token_address(&bucket_pda, &usdc_mint);
-        tracing::info!("[start_trading_transaction] Source liquidity (bucket's USDC vault): {}", source_liquidity);
-        
-        // Destination for cUSDC tokens (collateral tokens you'll receive)
-        let destination_collateral = get_associated_token_address(&bucket_pda, &reserve_collateral_mint);
-        tracing::info!("[start_trading_transaction] Destination collateral (bucket's cUSDC account): {}", destination_collateral);
-
-        tracing::info!("[start_trading_transaction] Building instruction with accounts");
         let start_trading_accounts = StartTradingAccount {
             bucket: bucket_pda,
             trading_pool: trading_pool_pda,
             creator,
-            reserve,
-            reserve_liquidity_supply,
-            lending_market,
-            lending_market_authority,
-            destination_collateral,
-            source_liquidity,
-            reserve_collateral_mint,
-            pyth_oracle,
-            switchboard_oracle,
-            token_program: spl_token::ID,
-            solend_program,
         };
         tracing::debug!("[start_trading_transaction] All accounts prepared for StartTrading instruction");
         
@@ -993,30 +1014,24 @@ impl IcmProgramInstance {
         let recent_blockhash = program.rpc().get_latest_blockhash().await?;
         tracing::debug!("[start_trading_transaction] Recent blockhash: {}", recent_blockhash);
         
-        // Create UNSIGNED transaction for frontend signing
-        tracing::info!("[start_trading_transaction] Creating unsigned transaction for frontend signing");
-        let tx = Transaction::new_with_payer(
+        // Create signed transaction (server-side signing like other methods)
+        let tx = Transaction::new_signed_with_payer(
             &instruction,
             Some(&creator),
+            &[&keypair_for_sign],
+            recent_blockhash,
         );
-        tracing::debug!("[start_trading_transaction] Transaction created with payer: {}", creator);
         
-        // Serialize transaction for frontend
-        tracing::info!("[start_trading_transaction] Serializing transaction");
-        let serialized_tx = bincode::serialize(&tx)?;
-        tracing::debug!("[start_trading_transaction] Transaction serialized, size: {} bytes", serialized_tx.len());
+        tracing::info!("[start_trading_transaction] Transaction signed successfully");
         
-        let base64_tx = base64::encode(serialized_tx);
-        tracing::debug!("[start_trading_transaction] Transaction encoded to base64, length: {} chars", base64_tx.len());
+        // Submit transaction to blockchain
+        let sig = program.rpc().send_and_confirm_transaction(&tx).await?;
+        tracing::info!("[start_trading_transaction] Transaction confirmed with signature: {}", sig);
 
-        let response = UnsignedTransactionResponse {
-            transaction: base64_tx,
+        Ok(UnsignedTransactionResponse {
+            transaction: sig.to_string(),
             message: format!("Start trading for bucket '{}'", request.bucket_name),
-        };
-        tracing::info!("[start_trading_transaction] Transaction creation completed successfully");
-        tracing::debug!("[start_trading_transaction] Response message: {}", response.message);
-        
-        Ok(response)
+        })
 }
 
     fn encode_response(&self, sig: String, message: String) -> UnsignedTransactionResponse {

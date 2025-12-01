@@ -51,7 +51,7 @@ mod agent;
 mod config;
 mod state_structs;
 
-use tracing_subscriber::{ layer::SubscriberExt, util::SubscriberInitExt };
+use tracing_subscriber::{ layer::SubscriberExt, util::SubscriberInitExt, EnvFilter };
 
 /// Application entry point.
 ///
@@ -76,11 +76,15 @@ use tracing_subscriber::{ layer::SubscriberExt, util::SubscriberInitExt };
 #[tokio::main]
 async fn main() {
     // Initialize the tracing subscriber for structured logging
-    // RUST_LOG =info
-    // This sets up console output with timestamps and proper formatting
+    // Load environment variables first
     dotenv::dotenv().ok();
+    
+    // Set up tracing with environment variable support
     tracing_subscriber
         ::registry()
+        .with(
+            EnvFilter::from_default_env() // This reads RUST_LOG
+        )
         .with(
             tracing_subscriber::fmt
                 ::layer()

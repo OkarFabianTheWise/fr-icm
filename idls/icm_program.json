@@ -1,5 +1,5 @@
 {
-  "address": "7K5cc9n4QKV4ojDVB6fvtLmueGRGdczn6b6JiRMAkbtC",
+  "address": "Cu2DErD5iWf5n2GL6hFbGuywXnbUAT8UwAdjqdof94fc",
   "metadata": {
     "name": "icm_program",
     "version": "0.1.0",
@@ -22,6 +22,7 @@
       "accounts": [
         {
           "name": "bucket",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -36,8 +37,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -349,6 +351,10 @@
       "accounts": [
         {
           "name": "bucket",
+          "docs": [
+            "@ audit: Make use of the close account macro for clean closing of the bucket account",
+            "`reference = https://www.anchor-lang.com/docs/references/account-constraints#accountclose--target`"
+          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -364,8 +370,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -373,6 +380,100 @@
               }
             ]
           }
+        },
+        {
+          "name": "vault_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "bucket"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "program_state.usdc_mint",
+                "account": "ProgramState"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "program_state"
         },
         {
           "name": "trading_pool",
@@ -397,8 +498,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -443,6 +545,10 @@
           "name": "creator",
           "writable": true,
           "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": []
@@ -477,8 +583,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -662,7 +769,11 @@
           }
         },
         {
-          "name": "usdc_mint"
+          "name": "usdc_mint",
+          "docs": [
+            "## @audit put the address constraint to ensure the usdc mint is the specified usdc mint in the constants file"
+          ],
+          "address": "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg"
         },
         {
           "name": "program_state",
@@ -800,10 +911,6 @@
       ],
       "args": [
         {
-          "name": "bucket_name",
-          "type": "string"
-        },
-        {
           "name": "amount",
           "type": "u64"
         }
@@ -884,12 +991,73 @@
         },
         {
           "name": "vault_token_account",
+          "writable": true
+        },
+        {
+          "name": "creator_profile",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  114,
+                  101,
+                  97,
+                  116,
+                  111,
+                  114,
+                  95,
+                  112,
+                  114,
+                  111,
+                  102,
+                  105,
+                  108,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "creator"
+              }
+            ]
+          }
+        },
+        {
+          "name": "program_state",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  114,
+                  111,
+                  103,
+                  114,
+                  97,
+                  109,
+                  95,
+                  115,
+                  116,
+                  97,
+                  116,
+                  101
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_vault",
           "writable": true,
           "pda": {
             "seeds": [
               {
                 "kind": "account",
-                "path": "bucket"
+                "path": "program_state"
               },
               {
                 "kind": "const",
@@ -973,7 +1141,12 @@
           }
         },
         {
-          "name": "usdc_mint"
+          "name": "creator_token_account",
+          "writable": true
+        },
+        {
+          "name": "usdc_mint",
+          "address": "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg"
         },
         {
           "name": "creator",
@@ -1030,7 +1203,7 @@
         },
         {
           "name": "management_fee",
-          "type": "u16"
+          "type": "u64"
         }
       ]
     },
@@ -1221,12 +1394,14 @@
           }
         },
         {
-          "name": "usdc_mint"
+          "name": "usdc_mint",
+          "address": "2RgRJx3z426TMCL84ZMXTRVCS5ee7iGVE4ogqcUAd3tg"
         },
         {
           "name": "owner",
           "writable": true,
-          "signer": true
+          "signer": true,
+          "address": "7yyieW3Zdcm5ncVWqiBhGvReYFQhZNEVdwVpqA3GuxGU"
         },
         {
           "name": "token_program",
@@ -1278,8 +1453,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -1311,8 +1487,9 @@
                 ]
               },
               {
-                "kind": "arg",
-                "path": "bucket_name"
+                "kind": "account",
+                "path": "bucket.name",
+                "account": "Bucket"
               },
               {
                 "kind": "account",
@@ -1325,45 +1502,6 @@
           "name": "creator",
           "writable": true,
           "signer": true
-        },
-        {
-          "name": "reserve"
-        },
-        {
-          "name": "reserve_liquidity_supply"
-        },
-        {
-          "name": "lending_market"
-        },
-        {
-          "name": "lending_market_authority"
-        },
-        {
-          "name": "destination_collateral",
-          "writable": true
-        },
-        {
-          "name": "source_liquidity",
-          "writable": true
-        },
-        {
-          "name": "reserve_collateral_mint"
-        },
-        {
-          "name": "pyth_oracle"
-        },
-        {
-          "name": "switchboard_oracle"
-        },
-        {
-          "name": "token_program",
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "solend_program",
-          "docs": [
-            "Address: ALend7Ketfx5bxh6ghsCDXAoDrhvEmsXT3cynB6aPLgx"
-          ]
         }
       ],
       "args": [
@@ -1875,128 +2013,143 @@
     },
     {
       "code": 6007,
+      "name": "FeeIsTooLow",
+      "msg": "Creator fee cannot be lower than 50bps"
+    },
+    {
+      "code": 6008,
       "name": "DuplicateTokens",
       "msg": "Duplicate tokens not allowed"
     },
     {
-      "code": 6008,
+      "code": 6009,
       "name": "BucketNotRaising",
       "msg": "Bucket is not in raising state"
     },
     {
-      "code": 6009,
+      "code": 6010,
       "name": "ContributionDeadlinePassed",
       "msg": "Contribution deadline has passed"
     },
     {
-      "code": 6010,
+      "code": 6011,
       "name": "TokenNotAllowed",
       "msg": "Token not allowed in this bucket"
     },
     {
-      "code": 6011,
+      "code": 6012,
       "name": "InvalidAmount",
       "msg": "Invalid amount"
     },
     {
-      "code": 6012,
+      "code": 6013,
       "name": "UnauthorizedCreator",
       "msg": "Unauthorized creator"
     },
     {
-      "code": 6013,
+      "code": 6014,
       "name": "ContributionStillActive",
       "msg": "Contribution window still active"
     },
     {
-      "code": 6014,
+      "code": 6015,
       "name": "NoContributions",
       "msg": "No contributions made"
     },
     {
-      "code": 6015,
+      "code": 6016,
       "name": "BucketNotTrading",
       "msg": "Bucket is not in trading state"
     },
     {
-      "code": 6016,
+      "code": 6017,
       "name": "TradingStillActive",
       "msg": "Trading window still active"
     },
     {
-      "code": 6017,
+      "code": 6018,
       "name": "BucketNotClosed",
       "msg": "Bucket is not closed"
     },
     {
-      "code": 6018,
+      "code": 6019,
       "name": "UnauthorizedContributor",
       "msg": "Unauthorized contributor"
     },
     {
-      "code": 6019,
+      "code": 6020,
       "name": "NoRewardsAvailable",
       "msg": "No rewards available"
     },
     {
-      "code": 6020,
+      "code": 6021,
       "name": "TradingNotStarted",
       "msg": "Trading has not started yet"
     },
     {
-      "code": 6021,
+      "code": 6022,
       "name": "InvalidTokenMint",
       "msg": "Invalid token mint for this bucket"
     },
     {
-      "code": 6022,
+      "code": 6023,
       "name": "TradingDeadlinePassed",
       "msg": "Trading deadline has passed"
     },
     {
-      "code": 6023,
+      "code": 6024,
       "name": "InvalidBucketStatus",
       "msg": "Invalid bucket status"
     },
     {
-      "code": 6024,
+      "code": 6025,
       "name": "InsufficientVaultBalance",
       "msg": "Insufficient vault balance"
     },
     {
-      "code": 6025,
+      "code": 6026,
       "name": "InvalidSwapAmount",
       "msg": "Invalid swap amount"
     },
     {
-      "code": 6026,
+      "code": 6027,
       "name": "Overflow",
       "msg": "Overflow occurred during arithmetic operation"
     },
     {
-      "code": 6027,
+      "code": 6028,
       "name": "ProfileAlreadyExists",
       "msg": "Profile already exists for this creator"
     },
     {
-      "code": 6028,
+      "code": 6029,
       "name": "ProfileDoesNotExist",
       "msg": "Profile does not exist for this creator"
     },
     {
-      "code": 6029,
+      "code": 6030,
       "name": "ProgramNotInitialized",
       "msg": "Program not initialized"
     },
     {
-      "code": 6030,
+      "code": 6031,
+      "name": "ProgramInitialized",
+      "msg": "Program already initialized"
+    },
+    {
+      "code": 6032,
       "name": "InvalidMint",
       "msg": "Invalid mint address"
     },
     {
-      "code": 6031,
+      "code": 6033,
       "name": "InsufficientFunds",
       "msg": "Insufficient funds"
+    },
+    {
+      "code": 6034,
+      "name": "UnauthorizedDeployer",
+      "msg": "Only the deployer can initialize the program"
     }
   ],
   "types": [
@@ -2045,6 +2198,10 @@
           },
           {
             "name": "closed_at",
+            "docs": [
+              "### This was hard coded to 0 on initilalization",
+              "### in the initialize_bucket()"
+            ],
             "type": "i64"
           },
           {
@@ -2057,7 +2214,7 @@
           },
           {
             "name": "performance_fee",
-            "type": "u16"
+            "type": "u64"
           },
           {
             "name": "raised_amount",
@@ -2312,6 +2469,9 @@
           },
           {
             "name": "token_bucket",
+            "docs": [
+              "### @check Does the order matter in implementation?"
+            ],
             "type": {
               "vec": "pubkey"
             }
@@ -2338,16 +2498,25 @@
           },
           {
             "name": "fundraising_deadline",
+            "docs": [
+              "### @check why is the fundraising deadline == bucket.contribution_deadline and what impact would the fundraising deadline have on the codebase"
+            ],
             "type": "i64"
           },
           {
             "name": "trading_start_time",
+            "docs": [
+              "### @check why is this option<i64> and hardcoded to None on initialization"
+            ],
             "type": {
               "option": "i64"
             }
           },
           {
             "name": "trading_end_time",
+            "docs": [
+              "### @check why is this option<i64> and hardcoded to None on initialization"
+            ],
             "type": {
               "option": "i64"
             }
@@ -2362,7 +2531,7 @@
           },
           {
             "name": "management_fee",
-            "type": "u16"
+            "type": "u64"
           }
         ]
       }
