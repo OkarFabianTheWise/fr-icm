@@ -1,0 +1,106 @@
+rules:
+
+  # =====================================================
+  # 1. No insecure HTTP requests (reqwest::get or client)
+  # =====================================================
+  - id: rust-insecure-http-request
+    message: "Avoid using insecure HTTP URLs. Use HTTPS instead."
+    severity: ERROR
+    languages: [rust]
+    pattern-regex: 'https?://'
+    patterns:
+      - pattern: |
+          reqwest::get($URL)
+      - pattern-not-regex: 'https://'
+    metadata:
+      category: security
+      technology: reqwest
+
+
+  # =====================================================
+  # 2. HTTP request must have error handling (.await?)
+  #    Equivalent of "fetch requires error handling"
+  # =====================================================
+  - id: rust-http-requires-error-handling
+    message: "HTTP request must be handled with proper error handling (match, ?, or .unwrap_or_default)."
+    severity: WARNING
+    languages: [rust]
+    patterns:
+      - pattern-either:
+          - pattern: reqwest::get($U)
+          - pattern: $C.get($U).send()
+      - pattern-not: |
+          match reqwest::get($U) {
+            Ok($X) => ...,
+            Err($E) => ...
+          }
+      - pattern-not-regex: '\?'
+      - pattern-not-regex: 'unwrap\('
+      - pattern-not-regex: 'expect\('
+    metadata:
+      category: reliability
+
+
+  # =====================================================
+  # 3. No unsafe blocks (Rust equivalent of eval)
+  # =====================================================
+  - id: rust-unsafe-block-detected
+    message: "Avoid using `unsafe` blocks unless absolutely necessary."
+    severity: ERROR
+    languages: [rust]
+    pattern: |
+      unsafe {
+        ...
+      }
+    metadata:
+      category: security
+
+
+  # =====================================================
+  # 4. No manual HTML string injection (XSS-like)
+  #    Equivalent of dangerouslySetInnerHTML
+  # =====================================================
+  - id: rust-html-string-injection
+    message: "Avoid manually injecting raw HTML. High XSS risk."
+    severity: WARNING
+    languages: [rust]
+    patterns:
+      - pattern-regex: '(?i)html\s*=\s*\".*\"'
+      - pattern-not-regex: 'sanitize|escape_html'
+    metadata:
+      category: security
+
+
+  # =====================================================
+  # 5. No unused async Futures (like unused Promises)
+  # =====================================================
+  - id: rust-unused-future
+    message: "Future created but not awaited or handled."
+    severity: WARNING
+    languages: [rust]
+    patterns:
+      - pattern: |
+          $F = async {
+            ...
+          };
+      - pattern-not-regex: 'await'
+    metadata:
+      category: correctness
+
+
+  # =====================================================
+  # 6. No hardcoded API keys / secrets in Rust
+  # =====================================================
+  - id: rust-no-hardcoded-api-keys
+    message: "Possible hardcoded API key or secret detected."
+    severity: ERROR
+    languages: [rust]
+    pattern-regex: >
+      (?i)
+      (api[_-]?key|secret|token)\s*=\s*"   # var = "value"
+      (?![1-9A-HJ-NP-Za-km-z]{32,44}")     # allow Solana Base58 program IDs
+      [A-Za-z0-9+/=_-]{16,}               # key-like value
+      "
+    metadata:
+      category: security
+      description: Detects Rust hardcoded secrets but excludes Solana Base58 program IDs.
