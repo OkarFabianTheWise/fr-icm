@@ -33,13 +33,14 @@ jobs:
         id: semgrep-pass
         run: |
           echo "Running Semgrep scan..."
-          semgrep --config .semgrep.yml --exclude node_modules --json > semgrep-results.json
+          semgrep --config .semgrep.yml \
+                  --exclude node_modules \
+                  --exclude target \
+                  --json --quiet --skip-unknown-extensions > semgrep-results.json
 
           echo "Scan complete. Parsing results for ERROR severity..."
-          echo "All findings:"
           jq '.results[] | {check_id: .check_id, path: .path, start: .start, severity: .extra.severity, message: .extra.message}' semgrep-results.json
 
-          # Fail CI only on ERROR severity
           if jq '.results[] | select(.extra.severity=="ERROR")' semgrep-results.json | grep -q '.'; then
             echo "ERROR severity findings detected. Failing CI."
             cat semgrep-results.json | jq '.results[] | select(.extra.severity=="ERROR")'
@@ -48,6 +49,7 @@ jobs:
             echo "No ERROR severity findings. CI passes."
             echo "result=true" >> $GITHUB_OUTPUT
           fi
+
 
 
   build-and-push:
