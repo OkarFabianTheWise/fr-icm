@@ -1,4 +1,6 @@
-# ICM Server - AI-Powered Trading System
+# ICM Server - AI-Powered Trading System For TradCem
+
+> By Fiatrouter Team
 
 ### sudo -u postgres psql
 
